@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Janus</string>
+    <string name="notification_channel_name">Janus BLE Service</string>
+    <string name="notification_channel_description">Keeps the BLE connection active</string>
+    <string name="notification_title">Janus Active</string>
+    <string name="notification_text">Broadcasting media to CarThing</string>
+</resources>
