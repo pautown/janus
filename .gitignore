@@ -26,3 +26,5 @@ Thumbs.db
 # Keystore files
 *.jks
 *.keystore
+*.jpg
+!assets/*.jpg

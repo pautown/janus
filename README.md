@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/janus-logo.jpg" alt="Janus Logo" width="300">
+</p>
+
 # Janus
 
 Android companion app for the llizard CarThing UI system. Bridges Android media playback to the Spotify CarThing device via Bluetooth Low Energy (BLE).
