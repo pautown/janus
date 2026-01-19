@@ -34,9 +34,9 @@ fun PlayerPage(
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Title
+        // Title - Gemini symbol represents Janus's dual nature
         Text(
-            text = "Janus",
+            text = "♊",
             style = MaterialTheme.typography.headlineLarge,
             color = MaterialTheme.colorScheme.primary
         )
