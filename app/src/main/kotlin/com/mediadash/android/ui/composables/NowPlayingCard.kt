@@ -61,6 +61,7 @@ fun NowPlayingCard(
     albumArtRequestActive: Boolean = false,
     mediaSource: MediaSource? = null,
     onSeek: (Long) -> Unit = {},
+    isInteractive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val progress = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
@@ -244,24 +245,30 @@ fun NowPlayingCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Seek slider
+            // Seek slider (interactive or display-only based on isInteractive)
             Column(modifier = Modifier.fillMaxWidth()) {
                 Slider(
                     value = displayProgress.coerceIn(0f, 1f),
                     onValueChange = { newValue ->
-                        isSeeking = newValue
+                        if (isInteractive) {
+                            isSeeking = newValue
+                        }
                     },
                     onValueChangeFinished = {
-                        if (isSeeking >= 0 && durationMs > 0) {
+                        if (isInteractive && isSeeking >= 0 && durationMs > 0) {
                             val seekPosition = (isSeeking * durationMs).toLong()
                             onSeek(seekPosition)
                         }
                         isSeeking = -1f
                     },
+                    enabled = isInteractive,
                     colors = SliderDefaults.colors(
                         thumbColor = MaterialTheme.colorScheme.primary,
                         activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                        inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
+                        disabledThumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                        disabledActiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                        disabledInactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )

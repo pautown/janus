@@ -28,6 +28,7 @@ interface PodcastRepository {
     suspend fun markEpisodeAsPlayed(episodeId: String, isPlayed: Boolean)
     suspend fun updatePlayPosition(episodeId: String, position: Long)
     fun getDownloadedEpisodes(): Flow<List<PodcastEpisode>>
+    fun getRecentEpisodes(limit: Int = 50): Flow<List<PodcastEpisode>>
     suspend fun getEpisodeById(episodeId: String): PodcastEpisode?
     suspend fun isFeedSubscribed(feedUrl: String): Boolean
 }
@@ -174,6 +175,12 @@ class PodcastRepositoryImpl @Inject constructor(
 
     override fun getDownloadedEpisodes(): Flow<List<PodcastEpisode>> {
         return episodeDao.getDownloadedEpisodes().map { entities ->
+            entities.map { it.toEpisode() }
+        }
+    }
+
+    override fun getRecentEpisodes(limit: Int): Flow<List<PodcastEpisode>> {
+        return episodeDao.getRecentEpisodes(limit).map { entities ->
             entities.map { it.toEpisode() }
         }
     }

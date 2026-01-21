@@ -1,5 +1,6 @@
 package com.mediadash.android.ui.player
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -71,6 +72,14 @@ fun PodcastPlayerPage(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val playbackState = uiState.playbackState
+
+    // Handle back button for overlays
+    BackHandler(enabled = uiState.showSpeedSelector || uiState.showPlaylist) {
+        when {
+            uiState.showSpeedSelector -> viewModel.onEvent(PodcastPlayerEvent.ToggleSpeedSelector)
+            uiState.showPlaylist -> viewModel.onEvent(PodcastPlayerEvent.TogglePlaylist)
+        }
+    }
 
     Box(
         modifier = Modifier

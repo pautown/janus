@@ -19,6 +19,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * View mode for the podcast library screen.
+ */
+enum class PodcastViewMode {
+    LIBRARY,    // Show subscribed podcasts grid
+    RECENT,     // Show recent episodes across all podcasts
+    DOWNLOADS   // Show downloaded episodes
+}
+
 data class PodcastUiState(
     val searchQuery: String = "",
     val searchResults: List<Podcast> = emptyList(),
@@ -26,6 +35,7 @@ data class PodcastUiState(
     val selectedPodcast: Podcast? = null,
     val episodes: List<PodcastEpisode> = emptyList(),
     val downloadedEpisodes: List<PodcastEpisode> = emptyList(),
+    val recentEpisodes: List<PodcastEpisode> = emptyList(),
     val activeDownloads: Map<String, DownloadProgress> = emptyMap(),
     val isSearching: Boolean = false,
     val isLoading: Boolean = false,
@@ -36,6 +46,9 @@ data class PodcastUiState(
     val showAddFeedDialog: Boolean = false,
     val showDownloadsSection: Boolean = false,
     val showUnsubscribeDialog: Boolean = false,
+    val showEpisodeActionDialog: Boolean = false,
+    val episodeForAction: PodcastEpisode? = null,
+    val viewMode: PodcastViewMode = PodcastViewMode.LIBRARY,
     val episodeLimit: Int = 15,
     val totalEpisodeCount: Int = 0,
     val canLoadMore: Boolean = false
@@ -59,6 +72,14 @@ sealed class PodcastEvent {
     object ShowUnsubscribeDialog : PodcastEvent()
     object HideUnsubscribeDialog : PodcastEvent()
     object ConfirmUnsubscribe : PodcastEvent()
+    // Long-press unsubscribe from library view
+    data class LongPressUnsubscribe(val podcast: Podcast) : PodcastEvent()
+    // Long-press episode for download/delete action
+    data class LongPressEpisode(val episode: PodcastEpisode) : PodcastEvent()
+    object HideEpisodeActionDialog : PodcastEvent()
+    object ConfirmEpisodeAction : PodcastEvent()
+    // View mode switching
+    data class SetViewMode(val mode: PodcastViewMode) : PodcastEvent()
     object LoadMoreEpisodes : PodcastEvent()
     object ToggleDownloadsSection : PodcastEvent()
     object ClearError : PodcastEvent()
@@ -92,6 +113,7 @@ class PodcastViewModel @Inject constructor(
         playerManager.connect()
         observeSubscribedPodcasts()
         observeDownloadedEpisodes()
+        observeRecentEpisodes()
         observeActiveDownloads()
     }
 
@@ -112,6 +134,14 @@ class PodcastViewModel @Inject constructor(
         viewModelScope.launch {
             podcastRepository.getDownloadedEpisodes().collect { episodes ->
                 _uiState.update { it.copy(downloadedEpisodes = episodes) }
+            }
+        }
+    }
+
+    private fun observeRecentEpisodes() {
+        viewModelScope.launch {
+            podcastRepository.getRecentEpisodes(50).collect { episodes ->
+                _uiState.update { it.copy(recentEpisodes = episodes) }
             }
         }
     }
@@ -181,11 +211,42 @@ class PodcastViewModel @Inject constructor(
                 }
                 _uiState.update { it.copy(showUnsubscribeDialog = false) }
             }
+            is PodcastEvent.LongPressUnsubscribe -> {
+                // Set selected podcast and show unsubscribe dialog from library view
+                _uiState.update { it.copy(selectedPodcast = event.podcast, showUnsubscribeDialog = true) }
+            }
+            is PodcastEvent.LongPressEpisode -> {
+                // Show episode action dialog for download/delete
+                _uiState.update { it.copy(episodeForAction = event.episode, showEpisodeActionDialog = true) }
+            }
+            is PodcastEvent.HideEpisodeActionDialog -> {
+                _uiState.update { it.copy(showEpisodeActionDialog = false, episodeForAction = null) }
+            }
+            is PodcastEvent.ConfirmEpisodeAction -> {
+                // Execute the action based on episode download state
+                _uiState.value.episodeForAction?.let { episode ->
+                    if (episode.isDownloaded) {
+                        deleteDownload(episode)
+                    } else {
+                        downloadEpisode(episode)
+                    }
+                }
+                _uiState.update { it.copy(showEpisodeActionDialog = false, episodeForAction = null) }
+            }
+            is PodcastEvent.SetViewMode -> {
+                _uiState.update { it.copy(viewMode = event.mode) }
+            }
             is PodcastEvent.LoadMoreEpisodes -> {
                 loadMoreEpisodes()
             }
             is PodcastEvent.ToggleDownloadsSection -> {
-                _uiState.update { it.copy(showDownloadsSection = !it.showDownloadsSection) }
+                // Legacy toggle - now we use SetViewMode instead
+                val newMode = if (_uiState.value.viewMode == PodcastViewMode.DOWNLOADS) {
+                    PodcastViewMode.LIBRARY
+                } else {
+                    PodcastViewMode.DOWNLOADS
+                }
+                _uiState.update { it.copy(viewMode = newMode, showDownloadsSection = !it.showDownloadsSection) }
             }
             is PodcastEvent.ClearError -> {
                 _uiState.update { it.copy(error = null) }

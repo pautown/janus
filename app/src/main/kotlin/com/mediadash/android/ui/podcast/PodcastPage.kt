@@ -1,7 +1,9 @@
 package com.mediadash.android.ui.podcast
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
@@ -74,6 +77,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -93,6 +97,25 @@ fun PodcastPage(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val playbackState by viewModel.playbackState.collectAsState()
+
+    // Handle back button based on current state (priority order)
+    BackHandler(
+        enabled = uiState.showEpisodeActionDialog ||
+                uiState.showUnsubscribeDialog ||
+                uiState.showAddFeedDialog ||
+                uiState.viewMode != PodcastViewMode.LIBRARY ||
+                uiState.selectedPodcast != null ||
+                uiState.searchQuery.isNotBlank()
+    ) {
+        when {
+            uiState.showEpisodeActionDialog -> viewModel.onEvent(PodcastEvent.HideEpisodeActionDialog)
+            uiState.showUnsubscribeDialog -> viewModel.onEvent(PodcastEvent.HideUnsubscribeDialog)
+            uiState.showAddFeedDialog -> viewModel.onEvent(PodcastEvent.HideAddFeedDialog)
+            uiState.viewMode != PodcastViewMode.LIBRARY -> viewModel.onEvent(PodcastEvent.SetViewMode(PodcastViewMode.LIBRARY))
+            uiState.selectedPodcast != null -> viewModel.onEvent(PodcastEvent.ClearSelection)
+            uiState.searchQuery.isNotBlank() -> viewModel.onEvent(PodcastEvent.SearchQueryChanged(""))
+        }
+    }
 
     // Check if podcast player has an episode loaded
     val hasPodcastPlaying = playbackState.currentEpisodeId != null &&
@@ -149,7 +172,7 @@ fun PodcastPage(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Search Results or Subscribed Podcasts
+                // Search Results or View Mode Content
                 if (uiState.searchQuery.isNotBlank()) {
                     SearchResultsSection(
                         results = uiState.searchResults,
@@ -158,22 +181,46 @@ fun PodcastPage(
                         onSubscribe = { viewModel.onEvent(PodcastEvent.SubscribeToPodcast(it)) },
                         onSelect = { viewModel.onEvent(PodcastEvent.SelectPodcast(it)) }
                     )
-                } else if (uiState.showDownloadsSection) {
-                    DownloadedEpisodesSection(
-                        episodes = uiState.downloadedEpisodes,
-                        activeDownloads = uiState.activeDownloads,
-                        onPlay = { viewModel.onEvent(PodcastEvent.PlayEpisode(it)) },
-                        onDelete = { viewModel.onEvent(PodcastEvent.DeleteDownload(it)) },
-                        onBack = { viewModel.onEvent(PodcastEvent.ToggleDownloadsSection) }
-                    )
                 } else {
-                    SubscribedPodcastsSection(
-                        podcasts = uiState.subscribedPodcasts,
-                        downloadedCount = uiState.downloadedEpisodes.size,
-                        onSelect = { viewModel.onEvent(PodcastEvent.SelectPodcast(it)) },
-                        onAddFeed = { viewModel.onEvent(PodcastEvent.ShowAddFeedDialog) },
-                        onShowDownloads = { viewModel.onEvent(PodcastEvent.ToggleDownloadsSection) }
+                    // View Mode Tabs
+                    ViewModeTabs(
+                        currentMode = uiState.viewMode,
+                        onModeChange = { viewModel.onEvent(PodcastEvent.SetViewMode(it)) }
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Content based on view mode
+                    when (uiState.viewMode) {
+                        PodcastViewMode.LIBRARY -> {
+                            SubscribedPodcastsSection(
+                                podcasts = uiState.subscribedPodcasts,
+                                downloadedCount = uiState.downloadedEpisodes.size,
+                                onSelect = { viewModel.onEvent(PodcastEvent.SelectPodcast(it)) },
+                                onLongPress = { viewModel.onEvent(PodcastEvent.LongPressUnsubscribe(it)) },
+                                onAddFeed = { viewModel.onEvent(PodcastEvent.ShowAddFeedDialog) },
+                                onShowDownloads = { viewModel.onEvent(PodcastEvent.SetViewMode(PodcastViewMode.DOWNLOADS)) }
+                            )
+                        }
+                        PodcastViewMode.RECENT -> {
+                            RecentEpisodesSection(
+                                episodes = uiState.recentEpisodes,
+                                subscribedPodcasts = uiState.subscribedPodcasts,
+                                activeDownloads = uiState.activeDownloads,
+                                onPlay = { viewModel.onEvent(PodcastEvent.PlayEpisode(it)) },
+                                onLongPress = { viewModel.onEvent(PodcastEvent.LongPressEpisode(it)) }
+                            )
+                        }
+                        PodcastViewMode.DOWNLOADS -> {
+                            DownloadedEpisodesSection(
+                                episodes = uiState.downloadedEpisodes,
+                                activeDownloads = uiState.activeDownloads,
+                                onPlay = { viewModel.onEvent(PodcastEvent.PlayEpisode(it)) },
+                                onDelete = { viewModel.onEvent(PodcastEvent.DeleteDownload(it)) },
+                                onLongPress = { viewModel.onEvent(PodcastEvent.LongPressEpisode(it)) }
+                            )
+                        }
+                    }
                 }
             } else {
                 // Episode List
@@ -234,6 +281,54 @@ fun PodcastPage(
                 },
                 dismissButton = {
                     TextButton(onClick = { viewModel.onEvent(PodcastEvent.HideUnsubscribeDialog) }) {
+                        Text(
+                            "Cancel",
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            )
+        }
+
+        // Episode Action Dialog (Download/Delete)
+        if (uiState.showEpisodeActionDialog && uiState.episodeForAction != null) {
+            val episode = uiState.episodeForAction!!
+            val isDownloaded = episode.isDownloaded
+            AlertDialog(
+                onDismissRequest = { viewModel.onEvent(PodcastEvent.HideEpisodeActionDialog) },
+                title = {
+                    Text(
+                        text = if (isDownloaded) "Delete Download" else "Download Episode",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                },
+                text = {
+                    Text(
+                        text = if (isDownloaded) {
+                            "Delete the downloaded file for \"${episode.title}\"?"
+                        } else {
+                            "Download \"${episode.title}\" for offline listening?"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.onEvent(PodcastEvent.ConfirmEpisodeAction) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isDownloaded) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            contentColor = if (isDownloaded) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Text(if (isDownloaded) "Delete" else "Download")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.onEvent(PodcastEvent.HideEpisodeActionDialog) }) {
                         Text(
                             "Cancel",
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
@@ -557,6 +652,7 @@ private fun SubscribedPodcastsSection(
     podcasts: List<Podcast>,
     downloadedCount: Int,
     onSelect: (Podcast) -> Unit,
+    onLongPress: (Podcast) -> Unit,
     onAddFeed: () -> Unit,
     onShowDownloads: () -> Unit
 ) {
@@ -643,7 +739,8 @@ private fun SubscribedPodcastsSection(
                 lazyGridItems(podcasts, key = { it.id }) { podcast ->
                     PodcastArtworkCard(
                         podcast = podcast,
-                        onClick = { onSelect(podcast) }
+                        onClick = { onSelect(podcast) },
+                        onLongPress = { onLongPress(podcast) }
                     )
                 }
             }
@@ -801,87 +898,269 @@ private fun DownloadsCard(
 }
 
 @Composable
-private fun DownloadedEpisodesSection(
-    episodes: List<PodcastEpisode>,
-    activeDownloads: Map<String, DownloadProgress>,
-    onPlay: (PodcastEpisode) -> Unit,
-    onDelete: (PodcastEpisode) -> Unit,
-    onBack: () -> Unit
+private fun ViewModeTabs(
+    currentMode: PodcastViewMode,
+    onModeChange: (PodcastViewMode) -> Unit
 ) {
-    Column {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-            Text(
-                text = "Downloaded Episodes",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-        }
+    val tabs = listOf(
+        PodcastViewMode.LIBRARY to "Library",
+        PodcastViewMode.RECENT to "Recent",
+        PodcastViewMode.DOWNLOADS to "Downloads"
+    )
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (episodes.isEmpty()) {
-            Box(
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        tabs.forEach { (mode, label) ->
+            val isSelected = currentMode == mode
+            Surface(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
+                    .weight(1f)
+                    .padding(4.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { onModeChange(mode) },
+                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "No downloaded episodes",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    Text(
-                        text = "Download episodes to listen offline",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                    )
-                }
-            }
-        } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                lazyListItems(episodes, key = { it.id }) { episode ->
-                    DownloadedEpisodeCard(
-                        episode = episode,
-                        onPlay = { onPlay(episode) },
-                        onDelete = { onDelete(episode) }
-                    )
-                }
+                Text(
+                    text = label,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp, horizontal = 12.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DownloadedEpisodeCard(
+private fun RecentEpisodesSection(
+    episodes: List<PodcastEpisode>,
+    subscribedPodcasts: List<Podcast>,
+    activeDownloads: Map<String, DownloadProgress>,
+    onPlay: (PodcastEpisode) -> Unit,
+    onLongPress: (PodcastEpisode) -> Unit
+) {
+    if (episodes.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = Icons.Default.Podcasts,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "No recent episodes",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                Text(
+                    text = "Subscribe to podcasts to see episodes here",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                )
+            }
+        }
+    } else {
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            lazyListItems(episodes, key = { it.id }) { episode ->
+                val podcast = subscribedPodcasts.find { it.id == episode.podcastId }
+                RecentEpisodeCard(
+                    episode = episode,
+                    podcastTitle = podcast?.title ?: "",
+                    podcastArtworkUrl = podcast?.artworkUrl ?: "",
+                    isDownloading = activeDownloads.containsKey(episode.id),
+                    downloadProgress = (activeDownloads[episode.id]?.progress ?: 0) / 100f,
+                    onPlay = { onPlay(episode) },
+                    onLongPress = { onLongPress(episode) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RecentEpisodeCard(
     episode: PodcastEpisode,
+    podcastTitle: String,
+    podcastArtworkUrl: String,
+    isDownloading: Boolean,
+    downloadProgress: Float,
     onPlay: () -> Unit,
-    onDelete: () -> Unit
+    onLongPress: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onPlay),
+            .combinedClickable(
+                onClick = onPlay,
+                onLongClick = onLongPress
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Episode artwork
+            AsyncImage(
+                model = episode.artworkUrl?.ifBlank { podcastArtworkUrl } ?: podcastArtworkUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Episode info
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = episode.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (podcastTitle.isNotBlank()) {
+                    Text(
+                        text = podcastTitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (episode.duration > 0) {
+                        Text(
+                            text = formatDuration(episode.duration),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+                    if (episode.isDownloaded) {
+                        Icon(
+                            imageVector = Icons.Default.DownloadDone,
+                            contentDescription = "Downloaded",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    } else if (isDownloading) {
+                        CircularProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
+            }
+
+            // Play button
+            IconButton(onClick = onPlay) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Play",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DownloadedEpisodesSection(
+    episodes: List<PodcastEpisode>,
+    activeDownloads: Map<String, DownloadProgress>,
+    onPlay: (PodcastEpisode) -> Unit,
+    onDelete: (PodcastEpisode) -> Unit,
+    onLongPress: (PodcastEpisode) -> Unit
+) {
+    if (episodes.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "No downloaded episodes",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                Text(
+                    text = "Long-press any episode to download",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                )
+            }
+        }
+    } else {
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            lazyListItems(episodes, key = { it.id }) { episode ->
+                DownloadedEpisodeCard(
+                    episode = episode,
+                    onPlay = { onPlay(episode) },
+                    onDelete = { onDelete(episode) },
+                    onLongPress = { onLongPress(episode) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DownloadedEpisodeCard(
+    episode: PodcastEpisode,
+    onPlay: () -> Unit,
+    onDelete: () -> Unit,
+    onLongPress: () -> Unit = {}
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onPlay,
+                onLongClick = onLongPress
+            ),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(
@@ -992,15 +1271,20 @@ private fun formatFileSize(bytes: Long): String {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PodcastArtworkCard(
     podcast: Podcast,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongPress: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongPress
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Card(

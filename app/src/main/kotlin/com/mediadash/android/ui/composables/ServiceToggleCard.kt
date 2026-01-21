@@ -82,7 +82,7 @@ fun ServiceToggleCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isRunning) "BLE Service Active" else "BLE Service Inactive",
+                    text = if (isRunning) "Gateway active" else "Janus waiting",
                     style = MaterialTheme.typography.titleMedium
                 )
 

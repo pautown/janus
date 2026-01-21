@@ -22,10 +22,13 @@ import androidx.compose.ui.unit.dp
 import com.mediadash.android.R
 import com.mediadash.android.ui.MainUiEvent
 import com.mediadash.android.ui.MainUiState
-import com.mediadash.android.ui.MediaSource
 
+/**
+ * Visual-only display of what's currently playing.
+ * No interactive playback controls - those are on the PodcastPlayerPage (page 3).
+ */
 @Composable
-fun PlayerPage(
+fun NowPlayingPage(
     uiState: MainUiState,
     onEvent: (MainUiEvent) -> Unit,
     onOpenNotificationSettings: () -> Unit
@@ -84,7 +87,7 @@ fun PlayerPage(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Now Playing
+        // Now Playing (visual-only, no interactive controls)
         uiState.mediaState?.let { mediaState ->
             NowPlayingCard(
                 title = mediaState.trackTitle,
@@ -96,24 +99,8 @@ fun PlayerPage(
                 albumArt = uiState.albumArtBitmap,
                 albumArtRequestActive = uiState.albumArtRequestActive,
                 mediaSource = uiState.mediaSource,
-                onSeek = { positionMs -> onEvent(MainUiEvent.SeekTo(positionMs)) }
+                isInteractive = false  // Visual-only mode
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Playback Controls - only show for internal podcast playback
-            // External media (Spotify, YouTube Music, etc.) is visual-only
-            // Podcast controls are now on the Podcast page mini-player
-            if (uiState.mediaSource == MediaSource.INTERNAL_PODCAST) {
-                PlaybackControlsRow(
-                    isPlaying = mediaState.isPlaying,
-                    onPrevious = { onEvent(MainUiEvent.Previous) },
-                    onPlayPause = { onEvent(MainUiEvent.PlayPause) },
-                    onNext = { onEvent(MainUiEvent.Next) },
-                    onSkipBack30 = { onEvent(MainUiEvent.SkipBack30) },
-                    onSkipForward30 = { onEvent(MainUiEvent.SkipForward30) }
-                )
-            }
 
             // Lyrics Display - show when enabled and lyrics are available
             if (uiState.lyricsEnabled && uiState.currentLyrics != null) {

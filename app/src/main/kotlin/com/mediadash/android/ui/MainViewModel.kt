@@ -18,7 +18,6 @@ import com.mediadash.android.domain.model.LyricsLine
 import com.mediadash.android.domain.model.LyricsState
 import com.mediadash.android.domain.model.ConnectionStatus
 import com.mediadash.android.domain.model.MediaState
-import com.mediadash.android.domain.model.PlaybackCommand
 import com.mediadash.android.media.PodcastPlayerManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -61,15 +60,11 @@ data class MainUiState(
 
 /**
  * UI events from the main screen.
+ * Note: Playback controls (PlayPause, Next, Previous, etc.) are handled by
+ * PodcastPlayerViewModel on the PodcastPlayerPage (page 3).
  */
 sealed class MainUiEvent {
     data object ToggleService : MainUiEvent()
-    data object PlayPause : MainUiEvent()
-    data object Next : MainUiEvent()
-    data object Previous : MainUiEvent()
-    data class SeekTo(val positionMs: Long) : MainUiEvent()
-    data object SkipForward30 : MainUiEvent()
-    data object SkipBack30 : MainUiEvent()
     data object OpenNotificationSettings : MainUiEvent()
     data object EnableBluetooth : MainUiEvent()
     data class ToggleLyrics(val enabled: Boolean) : MainUiEvent()
@@ -311,25 +306,11 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * Check if internal podcast player has an episode loaded (playing or paused).
-     */
-    private val hasInternalEpisodeLoaded: Boolean
-        get() = podcastPlayerManager.playbackState.value.let {
-            it.currentEpisodeId != null && it.currentEpisodeTitle.isNotBlank()
-        }
-
-    /**
      * Handles UI events.
      */
     fun onEvent(event: MainUiEvent) {
         when (event) {
             is MainUiEvent.ToggleService -> toggleService()
-            is MainUiEvent.PlayPause -> handlePlayPause()
-            is MainUiEvent.Next -> handleNext()
-            is MainUiEvent.Previous -> handlePrevious()
-            is MainUiEvent.SeekTo -> handleSeekTo(event.positionMs)
-            is MainUiEvent.SkipForward30 -> handleSkipRelative(30_000L)
-            is MainUiEvent.SkipBack30 -> handleSkipRelative(-30_000L)
             is MainUiEvent.OpenNotificationSettings -> {
                 // This will be handled by the UI layer
             }
@@ -340,52 +321,6 @@ class MainViewModel @Inject constructor(
                 Log.d("LYRICS", "🎵 VIEWMODEL - ToggleLyrics event: ${event.enabled}")
                 settingsManager.setLyricsEnabled(event.enabled)
             }
-        }
-    }
-
-    private fun handlePlayPause() {
-        if (hasInternalEpisodeLoaded) {
-            // Route to internal podcast player
-            podcastPlayerManager.playPause()
-        } else {
-            // Route to external media
-            sendCommand(PlaybackCommand.ACTION_TOGGLE)
-        }
-    }
-
-    private fun handleNext() {
-        if (hasInternalEpisodeLoaded) {
-            podcastPlayerManager.skipToNext()
-        } else {
-            sendCommand(PlaybackCommand.ACTION_NEXT)
-        }
-    }
-
-    private fun handlePrevious() {
-        if (hasInternalEpisodeLoaded) {
-            podcastPlayerManager.skipToPrevious()
-        } else {
-            sendCommand(PlaybackCommand.ACTION_PREVIOUS)
-        }
-    }
-
-    private fun handleSeekTo(positionMs: Long) {
-        if (hasInternalEpisodeLoaded) {
-            podcastPlayerManager.seekTo(positionMs)
-        } else {
-            sendSeekCommand(positionMs)
-        }
-    }
-
-    private fun handleSkipRelative(deltaMs: Long) {
-        if (hasInternalEpisodeLoaded) {
-            if (deltaMs > 0) {
-                podcastPlayerManager.seekForward(deltaMs)
-            } else {
-                podcastPlayerManager.seekBackward(-deltaMs)
-            }
-        } else {
-            skipRelative(deltaMs)
         }
     }
 
@@ -413,29 +348,5 @@ class MainViewModel @Inject constructor(
                 context.startForegroundService(intent)
             }
         }
-    }
-
-    private fun sendCommand(action: String) {
-        viewModelScope.launch {
-            mediaRepository.processCommand(PlaybackCommand(action = action))
-        }
-    }
-
-    private fun sendSeekCommand(positionMs: Long) {
-        viewModelScope.launch {
-            mediaRepository.processCommand(
-                PlaybackCommand(
-                    action = PlaybackCommand.ACTION_SEEK,
-                    value = positionMs.coerceAtLeast(0)
-                )
-            )
-        }
-    }
-
-    private fun skipRelative(deltaMs: Long) {
-        val currentPosition = uiState.value.mediaState?.position ?: 0L
-        val duration = uiState.value.mediaState?.duration ?: 0L
-        val newPosition = (currentPosition + deltaMs).coerceIn(0L, duration)
-        sendSeekCommand(newPosition)
     }
 }

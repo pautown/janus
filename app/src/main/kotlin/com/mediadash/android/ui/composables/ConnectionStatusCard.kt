@@ -22,7 +22,7 @@ import com.mediadash.android.domain.model.ConnectionStatus
 
 // Ethereal color palette
 private val EtherealMint = Color(0xFFA5D6A7)  // Connected - soft mint
-private val EtherealAmber = Color(0xFFFFE082)  // Advertising - soft amber
+private val EtherealAmber = Color(0xFFFFE082)  // Waiting - soft amber
 private val EtherealGray = Color(0xFFB0BEC5)  // Disconnected - soft blue-gray
 private val EtherealViolet = Color(0xFFB39DDB)  // Error - soft lavender
 
@@ -33,7 +33,7 @@ fun ConnectionStatusCard(
 ) {
     val (statusColor, statusText) = when (status) {
         is ConnectionStatus.Connected -> EtherealMint to "Connected"
-        is ConnectionStatus.Advertising -> EtherealAmber to "Advertising"
+        is ConnectionStatus.Advertising -> EtherealAmber to "Waiting"
         is ConnectionStatus.Disconnected -> EtherealGray to "Disconnected"
         is ConnectionStatus.Error -> EtherealViolet to "Error"
     }
