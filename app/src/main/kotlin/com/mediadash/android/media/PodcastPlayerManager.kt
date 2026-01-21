@@ -300,8 +300,11 @@ class PodcastPlayerManager @Inject constructor(
             updatePlaybackState()
 
             // Notify PlaybackSourceTracker about podcast playback state changes
-            // This handles both BLE-initiated and direct app UI playback
             val state = _playbackState.value
+
+            // Always update the playing state tracker
+            playbackSourceTracker.onMediaDashPodcastPlayingChanged(isPlaying)
+
             if (isPlaying) {
                 // Podcast started playing - track it as the active source
                 val podcastId = state.currentPodcastTitle ?: ""
@@ -315,7 +318,7 @@ class PodcastPlayerManager @Inject constructor(
                     title = title
                 )
             } else {
-                // Podcast paused - track the position
+                // Podcast paused - record the position (but DON'T change active source)
                 val position = mediaController?.currentPosition ?: state.position
                 Log.d(TAG, "Notifying tracker: podcast paused at ${position}ms")
                 playbackSourceTracker.onPaused(position)

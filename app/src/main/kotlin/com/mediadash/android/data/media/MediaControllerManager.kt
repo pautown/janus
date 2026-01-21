@@ -83,17 +83,24 @@ class MediaControllerManager @Inject constructor(
                 Log.d(TAG, "Playback state changed: ${state?.state}")
 
                 // Track external app playback state changes
+                val isPlaying = state?.state == PlaybackState.STATE_PLAYING
+                val currentTitle = activeController?.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
+
+                // Update the playing state in tracker
+                playbackSourceTracker.onExternalAppPlayingChanged(isPlaying, controller.packageName, currentTitle)
+
                 when (state?.state) {
                     PlaybackState.STATE_PLAYING -> {
-                        // External app started playing - update tracker
-                        val currentTitle = activeController?.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
-                        playbackSourceTracker.onExternalAppStarted(controller.packageName, currentTitle)
+                        // External app started playing
+                        Log.d(TAG, "External app playing: ${controller.packageName} - $currentTitle")
                     }
                     PlaybackState.STATE_PAUSED -> {
-                        // Track pause with position
+                        // Track pause with position (but don't change active source)
+                        Log.d(TAG, "External app paused at ${state.position}ms")
                         playbackSourceTracker.onPaused(state.position)
                     }
                     PlaybackState.STATE_STOPPED -> {
+                        Log.d(TAG, "External app stopped")
                         playbackSourceTracker.onStopped()
                     }
                     else -> {}

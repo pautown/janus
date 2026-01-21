@@ -88,7 +88,6 @@ import com.mediadash.android.domain.model.DownloadState
 import com.mediadash.android.domain.model.Podcast
 import com.mediadash.android.domain.model.PodcastEpisode
 import com.mediadash.android.media.DownloadProgress
-import com.mediadash.android.ui.composables.MiniPodcastPlayer
 import kotlinx.coroutines.delay
 
 @Composable
@@ -96,7 +95,6 @@ fun PodcastPage(
     viewModel: PodcastViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val playbackState by viewModel.playbackState.collectAsState()
 
     // Handle back button based on current state (priority order)
     BackHandler(
@@ -117,10 +115,6 @@ fun PodcastPage(
         }
     }
 
-    // Check if podcast player has an episode loaded
-    val hasPodcastPlaying = playbackState.currentEpisodeId != null &&
-            playbackState.currentEpisodeTitle.isNotBlank()
-
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -128,19 +122,6 @@ fun PodcastPage(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(16.dp)
         ) {
-            // Mini-player at the top when a podcast is playing
-            if (hasPodcastPlaying) {
-                MiniPodcastPlayer(
-                    playbackState = playbackState,
-                    onPlayPause = { viewModel.onEvent(PodcastEvent.PlayPause) },
-                    onSkipBackward = { viewModel.onEvent(PodcastEvent.SkipBackward) },
-                    onSkipForward = { viewModel.onEvent(PodcastEvent.SkipForward) },
-                    onPrevious = { viewModel.onEvent(PodcastEvent.PreviousTrack) },
-                    onNext = { viewModel.onEvent(PodcastEvent.NextTrack) }
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
             // Header with title or back button
             if (uiState.selectedPodcast != null) {
                 PodcastDetailHeader(
@@ -592,6 +573,7 @@ private fun SearchResultCard(
                 contentDescription = podcast.title,
                 modifier = Modifier
                     .size(60.dp)
+                    .aspectRatio(1f)
                     .clip(RoundedCornerShape(8.dp)),
                 contentScale = ContentScale.Crop
             )
@@ -1030,6 +1012,7 @@ private fun RecentEpisodeCard(
                 contentDescription = null,
                 modifier = Modifier
                     .size(56.dp)
+                    .aspectRatio(1f)
                     .clip(RoundedCornerShape(8.dp)),
                 contentScale = ContentScale.Crop
             )
@@ -1175,6 +1158,7 @@ private fun DownloadedEpisodeCard(
                     contentDescription = episode.title,
                     modifier = Modifier
                         .size(56.dp)
+                        .aspectRatio(1f)
                         .clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.Crop
                 )
@@ -1297,7 +1281,9 @@ private fun PodcastArtworkCard(
             AsyncImage(
                 model = podcast.artworkUrl,
                 contentDescription = podcast.title,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .aspectRatio(1f),
                 contentScale = ContentScale.Crop
             )
         }
@@ -1441,6 +1427,7 @@ private fun EpisodeCard(
                     contentDescription = episode.title,
                     modifier = Modifier
                         .size(56.dp)
+                        .aspectRatio(1f)
                         .clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.Crop
                 )

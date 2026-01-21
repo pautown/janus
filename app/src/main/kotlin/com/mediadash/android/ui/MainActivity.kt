@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.mediadash.android.media.PodcastPlayerService
 import com.mediadash.android.ui.composables.MainScreen
 import com.mediadash.android.ui.theme.MediaDashTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -88,5 +89,12 @@ class MainActivity : ComponentActivity() {
     private fun openNotificationListenerSettings() {
         val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         startActivity(intent)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Stop the podcast player service when the app is closed
+        // This destroys the Janus media channel
+        stopService(Intent(this, PodcastPlayerService::class.java))
     }
 }

@@ -62,77 +62,71 @@ class MediaRepositoryImpl @Inject constructor(
         when (command.action) {
             PlaybackCommand.ACTION_PLAY -> {
                 Log.d(TAG, "Executing: play")
-                // Smart resume: determine which source to play based on what was last paused
-                val targetSource = playbackSourceTracker.getSourceForPlayCommand()
-                when (targetSource) {
+                // Play the currently active source (whatever was last playing or paused)
+                val activeSource = playbackSourceTracker.getCurrentActiveSource()
+                Log.d(TAG, "Active source for play: $activeSource")
+                when (activeSource) {
                     PlaybackSource.MEDIADASH_PODCAST -> {
-                        // Resume MediaDash's podcast player
-                        val pausedInfo = playbackSourceTracker.getPausedPodcastInfo()
-                        if (pausedInfo != null) {
-                            Log.d(TAG, "Resuming MediaDash podcast: ${pausedInfo.title}")
-                            podcastPlayerManager.play()
-                        } else {
-                            // Fallback to external controller
-                            transportControls.play()
-                        }
+                        Log.d(TAG, "Playing internal podcast")
+                        podcastPlayerManager.play()
                     }
                     PlaybackSource.EXTERNAL_APP, PlaybackSource.NONE -> {
-                        // Resume external app via MediaController
+                        Log.d(TAG, "Playing external app")
                         transportControls.play()
                     }
                 }
-                // Note: PlaybackSourceTracker is notified via callbacks when playback actually starts:
-                // - PodcastPlayerManager.onIsPlayingChanged() for podcasts
-                // - MediaControllerManager.onPlaybackStateChanged() for external apps
             }
 
             PlaybackCommand.ACTION_PAUSE -> {
                 Log.d(TAG, "Executing: pause")
-                // Determine active source and pause appropriately
-                // Note: PlaybackSourceTracker is notified via callbacks in:
-                // - PodcastPlayerManager.onIsPlayingChanged() for podcasts
-                // - MediaControllerManager.onPlaybackStateChanged() for external apps
-                when (playbackSourceTracker.activeSource.value) {
+                // Pause the currently active source (does NOT change which source is active)
+                val activeSource = playbackSourceTracker.getCurrentActiveSource()
+                Log.d(TAG, "Active source for pause: $activeSource")
+                when (activeSource) {
                     PlaybackSource.MEDIADASH_PODCAST -> {
+                        Log.d(TAG, "Pausing internal podcast")
                         podcastPlayerManager.pause()
                     }
                     PlaybackSource.EXTERNAL_APP, PlaybackSource.NONE -> {
+                        Log.d(TAG, "Pausing external app")
                         transportControls.pause()
                     }
                 }
             }
 
             PlaybackCommand.ACTION_TOGGLE -> {
-                val isPlaying = controller.playbackState?.state == PlaybackState.STATE_PLAYING
-                Log.d(TAG, "Executing: toggle (currently playing: $isPlaying)")
-                if (isPlaying) {
-                    // Pause - tracker is notified via callbacks
-                    when (playbackSourceTracker.activeSource.value) {
-                        PlaybackSource.MEDIADASH_PODCAST -> {
+                // Toggle the currently active source
+                val activeSource = playbackSourceTracker.getCurrentActiveSource()
+                val isPodcastPlaying = playbackSourceTracker.isPodcastCurrentlyPlaying()
+                val isExternalPlaying = playbackSourceTracker.isExternalAppCurrentlyPlaying()
+                val anythingPlaying = isPodcastPlaying || isExternalPlaying
+
+                Log.d(TAG, "Executing: toggle (activeSource=$activeSource, podcastPlaying=$isPodcastPlaying, externalPlaying=$isExternalPlaying)")
+
+                if (anythingPlaying) {
+                    // Something is playing - pause it
+                    when {
+                        isPodcastPlaying -> {
+                            Log.d(TAG, "Pausing internal podcast")
                             podcastPlayerManager.pause()
                         }
-                        PlaybackSource.EXTERNAL_APP, PlaybackSource.NONE -> {
+                        isExternalPlaying -> {
+                            Log.d(TAG, "Pausing external app")
                             transportControls.pause()
                         }
                     }
                 } else {
-                    // Resume - use smart resume logic
-                    val targetSource = playbackSourceTracker.getSourceForPlayCommand()
-                    when (targetSource) {
+                    // Nothing is playing - resume the last active source
+                    when (activeSource) {
                         PlaybackSource.MEDIADASH_PODCAST -> {
-                            val pausedInfo = playbackSourceTracker.getPausedPodcastInfo()
-                            if (pausedInfo != null) {
-                                Log.d(TAG, "Resuming MediaDash podcast: ${pausedInfo.title}")
-                                podcastPlayerManager.play()
-                            } else {
-                                transportControls.play()
-                            }
+                            Log.d(TAG, "Resuming internal podcast")
+                            podcastPlayerManager.play()
                         }
                         PlaybackSource.EXTERNAL_APP, PlaybackSource.NONE -> {
+                            Log.d(TAG, "Resuming external app")
                             transportControls.play()
                         }
                     }
-                    // Note: onResumed() is called via callbacks when playback actually starts
                 }
             }
 
@@ -148,15 +142,18 @@ class MediaRepositoryImpl @Inject constructor(
 
             PlaybackCommand.ACTION_STOP -> {
                 Log.d(TAG, "Executing: stop")
-                // Stop both sources
-                // Note: PlaybackSourceTracker is notified via callbacks when playback stops
-                when (playbackSourceTracker.activeSource.value) {
+                // Stop the currently active source
+                val activeSource = playbackSourceTracker.getCurrentActiveSource()
+                when (activeSource) {
                     PlaybackSource.MEDIADASH_PODCAST -> {
+                        Log.d(TAG, "Stopping internal podcast")
                         podcastPlayerManager.pause()
                     }
-                    else -> {}
+                    PlaybackSource.EXTERNAL_APP, PlaybackSource.NONE -> {
+                        Log.d(TAG, "Stopping external app")
+                        transportControls.stop()
+                    }
                 }
-                transportControls.stop()
             }
 
             PlaybackCommand.ACTION_SEEK -> {
