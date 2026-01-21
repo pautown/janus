@@ -215,6 +215,18 @@ class GattServerManager @Inject constructor(
                 if (enabled) {
                     notificationEnabledDevices.add(device)
                     Log.d(TAG, "Notifications enabled for ${device.address}")
+
+                    // Check if this is for the media state characteristic
+                    val parentCharacteristic = descriptor.characteristic
+                    if (parentCharacteristic?.uuid == BleConstants.MEDIA_STATE_UUID) {
+                        // Send current media state immediately upon notification subscription
+                        lastMediaState?.let { state ->
+                            Log.i(TAG, "Sending initial media state to newly connected device: ${device.address}")
+                            scope.launch {
+                                sendMediaStateToDevice(device, state)
+                            }
+                        }
+                    }
                 } else {
                     notificationEnabledDevices.remove(device)
                     Log.d(TAG, "Notifications disabled for ${device.address}")
@@ -541,6 +553,28 @@ class GattServerManager @Inject constructor(
             if (!sent) {
                 Log.w(TAG, "Failed to notify media state to ${device.address}")
             }
+        }
+    }
+
+    /**
+     * Sends media state to a specific device.
+     * Used for initial state sync when a device first enables notifications.
+     */
+    @SuppressLint("MissingPermission")
+    private suspend fun sendMediaStateToDevice(device: BluetoothDevice, state: MediaState) {
+        val characteristic = mediaStateCharacteristic ?: return
+        val server = gattServer ?: return
+
+        val jsonData = json.encodeToString(state).toByteArray(Charsets.UTF_8)
+        characteristic.value = jsonData
+
+        throttler.throttle()
+        @Suppress("DEPRECATION")
+        val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+        if (sent) {
+            Log.i(TAG, "Initial media state sent to ${device.address}: ${state.trackTitle} by ${state.artist}")
+        } else {
+            Log.w(TAG, "Failed to send initial media state to ${device.address}")
         }
     }
 
