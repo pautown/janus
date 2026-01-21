@@ -78,6 +78,7 @@ class GattServerManager @Inject constructor(
     private var lyricsRequestCharacteristic: BluetoothGattCharacteristic? = null
     private var lyricsDataCharacteristic: BluetoothGattCharacteristic? = null
     private var settingsCharacteristic: BluetoothGattCharacteristic? = null
+    private var timeSyncCharacteristic: BluetoothGattCharacteristic? = null
 
     // State flows
     private val _connectionStatus = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected)
@@ -225,6 +226,11 @@ class GattServerManager @Inject constructor(
                             scope.launch {
                                 sendMediaStateToDevice(device, state)
                             }
+                        }
+                        // Send time sync after a short delay to ensure connection is stable
+                        scope.launch {
+                            kotlinx.coroutines.delay(2000) // Wait 2 seconds
+                            sendTimeSync(device)
                         }
                     }
                 } else {
@@ -412,6 +418,16 @@ class GattServerManager @Inject constructor(
         }
         service.addCharacteristic(settingsCharacteristic)
 
+        // Time Sync characteristic (Notify) - for syncing device time from phone
+        timeSyncCharacteristic = BluetoothGattCharacteristic(
+            BleConstants.TIME_SYNC_UUID,
+            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PERMISSION_READ
+        ).apply {
+            addDescriptor(createCCCD())
+        }
+        service.addCharacteristic(timeSyncCharacteristic)
+
         // Add service to server
         val added = gattServer?.addService(service) ?: false
         if (!added) {
@@ -419,7 +435,7 @@ class GattServerManager @Inject constructor(
             return false
         }
 
-        Log.d(TAG, "GATT service configured with 8 characteristics")
+        Log.d(TAG, "GATT service configured with 9 characteristics")
         return true
     }
 
@@ -575,6 +591,30 @@ class GattServerManager @Inject constructor(
             Log.i(TAG, "Initial media state sent to ${device.address}: ${state.trackTitle} by ${state.artist}")
         } else {
             Log.w(TAG, "Failed to send initial media state to ${device.address}")
+        }
+    }
+
+    /**
+     * Sends current time to a specific device for time synchronization.
+     * Format: Unix timestamp in seconds (simple decimal string)
+     */
+    @SuppressLint("MissingPermission")
+    private suspend fun sendTimeSync(device: BluetoothDevice) {
+        val characteristic = timeSyncCharacteristic ?: return
+        val server = gattServer ?: return
+
+        // Send Unix timestamp in seconds as a simple string
+        val timestamp = System.currentTimeMillis() / 1000
+        val timeData = timestamp.toString().toByteArray(Charsets.UTF_8)
+        characteristic.value = timeData
+
+        throttler.throttle()
+        @Suppress("DEPRECATION")
+        val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+        if (sent) {
+            Log.i(TAG, "Time sync sent to ${device.address}: $timestamp (${java.util.Date(timestamp * 1000)})")
+        } else {
+            Log.w(TAG, "Failed to send time sync to ${device.address}")
         }
     }
 

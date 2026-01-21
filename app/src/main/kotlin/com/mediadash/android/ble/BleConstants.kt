@@ -20,6 +20,7 @@ object BleConstants {
     val LYRICS_REQUEST_UUID: UUID = UUID.fromString("0000a0d6-0000-1000-8000-00805f9b34fb")
     val LYRICS_DATA_UUID: UUID = UUID.fromString("0000a0d7-0000-1000-8000-00805f9b34fb")
     val SETTINGS_UUID: UUID = UUID.fromString("0000a0d8-0000-1000-8000-00805f9b34fb")
+    val TIME_SYNC_UUID: UUID = UUID.fromString("0000a0d9-0000-1000-8000-00805f9b34fb")
 
     // Client Characteristic Configuration Descriptor UUID (standard)
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
