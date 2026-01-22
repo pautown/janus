@@ -596,23 +596,35 @@ class GattServerManager @Inject constructor(
 
     /**
      * Sends current time to a specific device for time synchronization.
-     * Format: Unix timestamp in seconds (simple decimal string)
+     * Format: "timestamp|offset_minutes|timezone_id"
+     *   - timestamp: Unix timestamp in seconds (UTC)
+     *   - offset_minutes: Timezone offset from UTC in minutes (e.g., -300 for EST)
+     *   - timezone_id: IANA timezone ID (e.g., "America/New_York")
+     * Example: "1737590400|-300|America/New_York"
      */
     @SuppressLint("MissingPermission")
     private suspend fun sendTimeSync(device: BluetoothDevice) {
         val characteristic = timeSyncCharacteristic ?: return
         val server = gattServer ?: return
 
-        // Send Unix timestamp in seconds as a simple string
+        // Get Unix timestamp in seconds
         val timestamp = System.currentTimeMillis() / 1000
-        val timeData = timestamp.toString().toByteArray(Charsets.UTF_8)
+
+        // Get timezone information
+        val timeZone = java.util.TimeZone.getDefault()
+        val offsetMinutes = timeZone.rawOffset / 60000  // Convert milliseconds to minutes
+        val timezoneId = timeZone.id
+
+        // Format: "timestamp|offset_minutes|timezone_id"
+        val timeSyncData = "$timestamp|$offsetMinutes|$timezoneId"
+        val timeData = timeSyncData.toByteArray(Charsets.UTF_8)
         characteristic.value = timeData
 
         throttler.throttle()
         @Suppress("DEPRECATION")
         val sent = server.notifyCharacteristicChanged(device, characteristic, false)
         if (sent) {
-            Log.i(TAG, "Time sync sent to ${device.address}: $timestamp (${java.util.Date(timestamp * 1000)})")
+            Log.i(TAG, "Time sync sent to ${device.address}: $timeSyncData (${java.util.Date(timestamp * 1000)})")
         } else {
             Log.w(TAG, "Failed to send time sync to ${device.address}")
         }
