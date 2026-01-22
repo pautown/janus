@@ -62,6 +62,9 @@ class GattServerService : Service() {
     @Inject
     lateinit var settingsManager: com.mediadash.android.data.local.SettingsManager
 
+    @Inject
+    lateinit var mediaControllerManager: com.mediadash.android.data.media.MediaControllerManager
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var mediaStateJob: Job? = null
     private var commandJob: Job? = null
@@ -328,17 +331,28 @@ class GattServerService : Service() {
 
                 // Get active media channels from MediaSessionListener
                 val listener = com.mediadash.android.data.media.MediaSessionListener.getInstance()
-                val channels = listener?.getActiveMediaChannels() ?: emptyList()
+                val externalChannels = listener?.getActiveMediaChannels() ?: emptyList()
+
+                // Build channel list - include "Podcasts" if podcast playback is active
+                val allChannels = mutableListOf<String>()
+
+                // Add "Podcasts" if podcast is active (put it first for visibility)
+                if (mediaControllerManager.isPodcastActive()) {
+                    allChannels.add("Podcasts")
+                }
+
+                // Add external media apps
+                allChannels.addAll(externalChannels)
 
                 val elapsed = System.currentTimeMillis() - startTime
                 Log.i("MEDIA_CHANNELS", "📤 RESPONSE: Media channels")
-                Log.i("MEDIA_CHANNELS", "   Channels found: ${channels.size}")
-                channels.forEach { channel ->
+                Log.i("MEDIA_CHANNELS", "   Channels found: ${allChannels.size}")
+                allChannels.forEach { channel ->
                     Log.i("MEDIA_CHANNELS", "   - $channel")
                 }
                 Log.i("MEDIA_CHANNELS", "   Processing time: ${elapsed}ms")
 
-                gattServerManager.notifyMediaChannels(channels)
+                gattServerManager.notifyMediaChannels(allChannels)
                 Log.i("MEDIA_CHANNELS", "✅ Media channels transmitted via BLE")
             } catch (e: Exception) {
                 Log.e("MEDIA_CHANNELS", "❌ Error handling media channels request", e)
@@ -351,6 +365,14 @@ class GattServerService : Service() {
             try {
                 if (channelName.isEmpty()) {
                     Log.w("MEDIA_CHANNELS", "⚠️ Empty channel name in select request")
+                    return@launch
+                }
+
+                if (channelName == "Podcasts") {
+                    // Special handling for Podcasts - activate internal podcast player
+                    Log.i("MEDIA_CHANNELS", "✅ Selected Podcasts channel (internal)")
+                    // The podcast player will set itself as active when it starts playing
+                    // For now, just acknowledge the selection - the podcast UI will handle playback
                     return@launch
                 }
 

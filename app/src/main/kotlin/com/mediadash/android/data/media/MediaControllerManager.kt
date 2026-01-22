@@ -143,6 +143,11 @@ class MediaControllerManager @Inject constructor(
     }
 
     /**
+     * Returns true if podcasts are the active media source.
+     */
+    fun isPodcastActive(): Boolean = isPodcastActive
+
+    /**
      * Clears the active controller.
      */
     fun clearActiveController() {
