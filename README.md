@@ -24,14 +24,16 @@ Janus is part of a three-component system for bringing media control to the Spot
 
 ## Features
 
-- **BLE GATT Server**: Advertises and serves media state over BLE
-- **Universal Media Control**: Monitors any Android media app via MediaSessionCompat
-- **Podcast Player**: Built-in podcast player with subscription management
-- **Podcast Browsing**: Lazy-loading podcast browser with A-Z list, recent episodes, and per-podcast episode lists
-- **Album Art Transfer**: Optimized binary chunked transfer protocol
+- **BLE GATT Server**: Advertises as "Janus" and serves media state over BLE
+- **Universal Media Control**: Monitors any Android media app via NotificationListenerService
+- **Media Channel Selection**: Switch which media app to control (Spotify, YouTube Music, Podcasts, etc.)
+- **Podcast Player**: Built-in Media3/ExoPlayer podcast player with subscription management
+- **Podcast Browsing**: Lazy-loading podcast browser with A-Z list, recent episodes, and paginated per-podcast episode lists
+- **Album Art Transfer**: Optimized binary chunked transfer protocol (WebP, 250x250px)
 - **Compact BLE Format**: ~55% reduction in payload size for podcast data
-- **Lyrics Fetching**: Multi-source synced lyrics (LRCLIB, NetEase)
-- **Playback Commands**: Bidirectional control (play, pause, seek, volume, skip)
+- **Synced Lyrics**: Fetches time-synced lyrics from LRCLIB API with caching
+- **Playback Commands**: Bidirectional control (play, pause, seek, volume, skip, toggle)
+- **Time Sync**: Syncs phone time to CarThing on connection
 - **Foreground Service**: Maintains BLE connection in background
 
 ## Requirements
@@ -106,23 +108,49 @@ Or build release APK:
 
 ### Key Components
 
-#### BLE Layer
-- **GattServerService**: Foreground service hosting the BLE GATT server
-- **GattServerManager**: Manages BLE lifecycle, advertising, and characteristic operations
-- **AlbumArtTransmitter**: Handles chunked album art transmission
-- **NotificationThrottler**: Rate-limits BLE notifications to prevent overflow
+#### BLE Layer (`com.mediadash.android.ble`)
+- **GattServerService**: Foreground service hosting the BLE GATT server. Manages the lifecycle, observes media state changes, and coordinates characteristic updates. Uses Hilt for dependency injection.
+- **GattServerManager**: Core BLE management - opens GATT server, sets up characteristics, handles advertising, manages device connections, and sends notifications. Singleton scoped.
+- **AlbumArtTransmitter**: Handles chunked binary album art transmission with flow control. Tracks in-flight transfers per device and uses notification callbacks for pacing.
+- **NotificationThrottler**: Rate-limits BLE notifications with configurable minimum interval (10ms default) to prevent buffer overflow.
+- **BleConstants**: Protocol constants including UUIDs, chunk sizes (496 bytes), header size (16 bytes), and image dimensions (250x250).
 
-#### Data Layer
-- **MediaRepository**: Provides current media state and album art
-- **MediaSessionListener**: NotificationListenerService that monitors Android media sessions
-- **PodcastRepository**: Manages podcast subscriptions and episodes (Room database)
-- **PodcastPlayerService**: Media3-based podcast player with MediaSession support
-- **LyricsApiService**: Fetches synced lyrics from LRCLIB and NetEase
+#### Data Layer (`com.mediadash.android.data`)
+- **MediaRepository/MediaRepositoryImpl**: Provides current media state, album art chunks, and processes playback commands. Bridges MediaControllerManager and PodcastRepository.
+- **MediaControllerManager**: Manages the active Android MediaController for external apps (Spotify, YouTube Music, etc.). Tracks playback state, processes metadata changes, and prepares album art chunks.
+- **MediaSessionListener**: NotificationListenerService that monitors all Android media sessions. Implements auto-switching when a new app starts playing and channel selection.
+- **PlaybackSourceTracker**: Tracks which media source (internal podcast vs external app) is active. Enables proper resume functionality and play/pause routing.
+- **PodcastRepository**: Manages podcast subscriptions, episodes, and feed parsing using Room database. Supports iTunes API search and RSS feed subscriptions.
+- **AlbumArtCache**: LRU cache for prepared album art chunks, keyed by hash.
+- **AlbumArtFetcher**: Fetches album art from MediaMetadata or URLs, resizes to 250x250, encodes as WebP.
+- **LyricsManager**: Manages lyrics fetching, caching (LRU, 50 entries), and BLE transmission. Converts lyrics to chunked format.
+- **SettingsManager**: DataStore-backed settings (e.g., lyrics enabled toggle).
 
-#### Domain Layer
-- **MediaState**: Current playback state (track, artist, position, volume)
-- **PlaybackCommand**: Commands from CarThing (play, pause, seek, volume, podcast browsing)
-- **CompactBleModels**: Optimized data models for BLE transfer
+#### Media Layer (`com.mediadash.android.media`)
+- **PodcastPlayerService**: Media3 MediaSessionService hosting ExoPlayer for podcast playback. Handles audio focus and background playback.
+- **PodcastPlayerManager**: High-level podcast playback API. Manages playlist, playback controls, and syncs state to MediaControllerManager for BLE exposure.
+- **EpisodeDownloadManager**: Handles podcast episode downloads for offline playback.
+
+#### Domain Layer (`com.mediadash.android.domain`)
+- **MediaState**: Current playback state serialized to JSON (track, artist, album, duration, position, volume, albumArtHash, mediaChannel).
+- **PlaybackCommand**: Commands from CarThing with validation. Supports playback controls, podcast browsing, and media channel selection.
+- **CompactBleModels**: Optimized data models with short field names for minimal BLE bandwidth. Includes hash generation functions.
+- **PodcastInfoResponse**: Legacy full podcast response and new lazy-loading response types (PodcastListResponse, RecentEpisodesResponse, PodcastEpisodesResponse).
+- **LyricsState/CompactLyricsResponse**: Lyrics models with timestamps for synced lyrics display.
+- **AlbumArtChunk**: Binary chunk model with serialization to 16-byte header + data format.
+
+#### DI Layer (`com.mediadash.android.di`)
+- **AppModule**: Provides BluetoothManager, BluetoothAdapter, AudioManager, coroutine dispatchers, and application scope.
+- **BleModule**: Provides GattServerManager and related BLE components.
+- **MediaModule**: Provides MediaRepository, MediaControllerManager, and related media components.
+- **PodcastModule**: Provides Room database, DAOs, PodcastRepository, and RSS parser.
+
+#### UI Layer (`com.mediadash.android.ui`)
+- **MainActivity**: Entry point with permission handling for Bluetooth and notifications.
+- **MainScreen**: Compose-based main UI with connection status, now playing, and navigation.
+- **MainViewModel**: UI state management, service control, and podcast observation.
+- **PodcastPage/PodcastViewModel**: Podcast subscription management and browsing.
+- **PodcastPlayerPage/PodcastPlayerViewModel**: Podcast playback controls and progress.
 
 ## BLE Protocol
 
@@ -135,14 +163,15 @@ Or build release APK:
 
 | Characteristic | UUID | Properties | Description |
 |----------------|------|------------|-------------|
-| Media State | `0000a0d1-...` | Read, Notify | Current media playback state (JSON) |
-| Playback Control | `0000a0d2-...` | Write | Commands from CarThing (JSON) |
-| Album Art Request | `0000a0d3-...` | Write | Request album art by hash (JSON) |
-| Album Art Data | `0000a0d4-...` | Read, Notify | Album art chunks (binary) |
-| Podcast Info | `0000a0d5-...` | Read, Notify | Podcast data (JSON, chunked) |
-| Lyrics Request | `0000a0d6-...` | Write | Request lyrics for track |
-| Lyrics Data | `0000a0d7-...` | Read, Notify | Synced lyrics (JSON, chunked) |
-| Settings | `0000a0d8-...` | Read, Write | Configuration settings |
+| Media State | `0000a0d1-0000-1000-8000-00805f9b34fb` | Read, Notify | Current media playback state (JSON) |
+| Playback Control | `0000a0d2-0000-1000-8000-00805f9b34fb` | Write, Write No Response | Commands from CarThing (JSON) |
+| Album Art Request | `0000a0d3-0000-1000-8000-00805f9b34fb` | Write, Write No Response | Request album art by hash (JSON) |
+| Album Art Data | `0000a0d4-0000-1000-8000-00805f9b34fb` | Read, Notify | Album art chunks (binary) |
+| Podcast Info | `0000a0d5-0000-1000-8000-00805f9b34fb` | Read, Notify | Podcast data (JSON, chunked) |
+| Lyrics Request | `0000a0d6-0000-1000-8000-00805f9b34fb` | Write, Write No Response | Request lyrics for track (JSON) |
+| Lyrics Data | `0000a0d7-0000-1000-8000-00805f9b34fb` | Read, Notify | Synced lyrics (JSON, chunked) |
+| Settings | `0000a0d8-0000-1000-8000-00805f9b34fb` | Read, Notify | Configuration settings (JSON) |
+| Time Sync | `0000a0d9-0000-1000-8000-00805f9b34fb` | Read, Notify | Unix timestamp for time sync |
 
 ### Media State Characteristic
 
@@ -158,44 +187,81 @@ JSON structure sent to CarThing on media changes:
   "duration": 240000,
   "position": 45000,
   "volume": 75,
-  "albumArtHash": "1234567890"
+  "albumArtHash": "1234567890",
+  "mediaChannel": "Spotify"
 }
 ```
+
+The `mediaChannel` field indicates which app is being controlled (e.g., "Spotify", "YouTube Music", "Podcasts").
 
 ### Playback Control Characteristic
 
 Commands sent from CarThing:
 
 ```json
+// Basic playback controls
 {"action": "play"}
 {"action": "pause"}
 {"action": "toggle"}
 {"action": "next"}
 {"action": "previous"}
+{"action": "stop"}
 {"action": "seek", "value": 60000}
 {"action": "volume", "value": 80}
+
+// Podcast playback (by episode hash - recommended)
+{"action": "play_episode", "episodeHash": "a1b2c3d4"}
+
+// Legacy podcast playback (by index - deprecated)
 {"action": "play_podcast_episode", "podcastId": "abc123", "episodeIndex": 5}
+
+// Podcast data requests (lazy loading)
 {"action": "request_podcast_list"}
 {"action": "request_recent_episodes", "limit": 30}
 {"action": "request_podcast_episodes", "podcastId": "abc123", "offset": 0, "limit": 15}
+
+// Media channel selection (switch which app to control)
+{"action": "request_media_channels"}
+{"action": "select_media_channel", "channel": "Spotify"}
 ```
+
+### Lyrics Request Characteristic
+
+Request lyrics for current track:
+
+```json
+{"action": "get", "artist": "Artist Name", "track": "Track Title"}
+{"action": "get", "hash": "abc12345"}
+{"action": "clear", "hash": "abc12345"}
+```
+
+### Time Sync Characteristic
+
+On client connection, Janus sends a Unix timestamp (seconds since epoch) as a UTF-8 string for CarThing time synchronization.
 
 ### Album Art Transfer Protocol
 
-**Binary chunk format** (512 bytes total):
+**Binary chunk format** (16-byte header + up to 496 bytes data):
 
 ```
-[0-3]   Magic bytes: 0xAA 0xBB 0xCC 0xDD
-[4-7]   CRC32 hash (big-endian)
-[8-9]   Chunk index (big-endian uint16)
-[10-11] Total chunks (big-endian uint16)
-[12-15] Data length (big-endian uint32)
-[16-511] Raw WebP image data (496 bytes max)
+Offset  Size   Type      Field
+------  ----   ----      -----
+0       4      uint32    hash (CRC32 of artist+album, little-endian)
+4       2      uint16    chunkIndex (0-based, little-endian)
+6       2      uint16    totalChunks (little-endian)
+8       2      uint16    dataLength (bytes in this chunk, little-endian)
+10      4      uint32    dataCRC32 (CRC32 of chunk data, little-endian)
+14      2      uint16    reserved (0)
+16+     N      bytes     raw WebP image data (max 496 bytes)
 ```
 
+**Protocol details:**
 - Album art resized to 250x250px, WebP format, quality 75
-- Chunks sent at 10ms intervals with ACK flow control
+- Maximum notification size: 512 bytes (16 header + 496 data)
+- Chunks sent with 10ms minimum interval between notifications
 - CarThing requests art by CRC32 hash to avoid redundant transfers
+- Album art hash = CRC32(artist + album) as decimal string
+- Request format: `{"hash": "1234567890"}`
 
 ### Podcast Info Characteristic
 
@@ -221,11 +287,13 @@ Header: `[0x02][chunk_index][total_chunks]` + JSON payload
 ```json
 {
   "e": [
-    {"h": "a1b2c3d4", "c": "Podcast Name", "t": "Episode Title", "d": 3600, "i": 0}
+    {"h": "a1b2c3d4", "p": "def67890", "c": "Podcast Name", "t": "Episode Title", "d": 3600, "u": 1704499200, "i": 0}
   ],
   "t": 30
 }
 ```
+
+Fields: `h`=episode hash, `p`=podcast hash, `c`=channel/podcast name, `t`=title, `d`=duration (seconds), `u`=pubDate (unix timestamp seconds), `i`=index (for backward compat)
 
 #### Type 3: Podcast Episodes (Paginated)
 
@@ -239,10 +307,68 @@ Header: `[0x03][chunk_index][total_chunks]` + JSON payload
   "o": 0,
   "m": true,
   "e": [
-    {"h": "a1b2c3d4", "t": "Episode Title", "d": 3600}
+    {"h": "a1b2c3d4", "t": "Episode Title", "d": 3600, "u": 1704499200}
   ]
 }
 ```
+
+Fields: `h`=podcast/episode hash, `n`=name, `t`=total count or title, `o`=offset, `m`=has more, `e`=episodes, `d`=duration (seconds), `u`=pubDate (unix timestamp seconds)
+
+#### Type 4: Media Channels
+
+Header: `[0x04][chunk_index][total_chunks]` + binary payload
+
+Binary format for media channel list:
+```
+2 bytes: uint16 count (big-endian)
+For each channel:
+  1 byte: length of name
+  N bytes: UTF-8 name
+```
+
+Example channels: "Spotify", "YouTube Music", "Podcasts"
+
+### Lyrics Data Characteristic
+
+Lyrics are sent in chunked JSON format. Each chunk has a 3-byte header followed by JSON:
+
+Header: `[lyrics_chunk_index][ble_packet_index][total_ble_packets]`
+
+```json
+{
+  "h": "abc12345",
+  "s": true,
+  "n": 50,
+  "c": 0,
+  "m": 3,
+  "l": [
+    {"t": 15000, "l": "First line of lyrics"},
+    {"t": 18500, "l": "Second line of lyrics"}
+  ]
+}
+```
+
+Fields:
+- `h`: Hash (CRC32 of artist|track)
+- `s`: Synced (true if has timestamps)
+- `n`: Total line count
+- `c`: Chunk index (0-based)
+- `m`: Max chunks (total)
+- `l`: Array of lyrics lines
+  - `t`: Timestamp in milliseconds (0 if unsynced)
+  - `l`: Lyrics text
+
+Clear notification sends empty lines array with `n=0`.
+
+### Settings Characteristic
+
+Settings are broadcast as JSON when they change:
+
+```json
+{"lyricsEnabled": true}
+```
+
+Clients can read current settings or subscribe to changes via notifications
 
 ## Compact BLE Format
 
@@ -295,15 +421,85 @@ To minimize BLE bandwidth usage, podcast data uses a compact JSON format with ab
 
 ### Hash Generation
 
-Episode hash encodes `podcastId|pubDate` as CRC32:
+**Episode hash** encodes `feedUrl|pubDate|duration` as CRC32 (uses seconds, not milliseconds):
 ```kotlin
-fun generateEpisodeHash(podcastId: String, pubDate: Long): String {
-    val input = "$podcastId|$pubDate"
+fun generateEpisodeHash(feedUrl: String, pubDate: Long, duration: Long): String {
+    val pubDateSec = pubDate / 1000
+    val durationSec = duration / 1000
+    val input = "$feedUrl|$pubDateSec|$durationSec"
     val crc = CRC32()
     crc.update(input.toByteArray())
     return String.format("%08x", crc.value)  // "a1b2c3d4"
 }
 ```
+
+**Podcast hash** uses the podcast ID directly if short, otherwise CRC32:
+```kotlin
+fun generatePodcastHash(podcastId: String): String {
+    if (podcastId.length <= 8) return podcastId
+    val crc = CRC32()
+    crc.update(podcastId.toByteArray())
+    return String.format("%08x", crc.value)
+}
+```
+
+**Album art hash** encodes `artist|album` as CRC32:
+```kotlin
+fun generateAlbumArtHash(artist: String, album: String): String {
+    val input = "$artist|$album"
+    val crc = CRC32()
+    crc.update(input.toByteArray())
+    return crc.value.toString()  // Decimal string: "1234567890"
+}
+```
+
+**Lyrics hash** encodes `artist|track` (lowercase, trimmed) as CRC32.
+
+## Media Channel Selection
+
+Janus monitors all active Android media sessions and allows the CarThing to switch which app it controls.
+
+### How It Works
+
+1. **MediaSessionListener** monitors Android's MediaSessionManager for active sessions
+2. When a new app starts playing, Janus auto-switches to control it
+3. CarThing can request the list of available channels via `request_media_channels`
+4. CarThing can select a specific channel via `select_media_channel`
+
+### Channel Types
+
+| Channel | Source | Description |
+|---------|--------|-------------|
+| Spotify | External | Spotify app media session |
+| YouTube Music | External | YouTube Music app media session |
+| Podcasts | Internal | Janus built-in podcast player |
+| (other apps) | External | Any app with active MediaSession |
+
+### Auto-Switch Behavior
+
+When an external app starts playing:
+1. MediaSessionListener detects the new playing session
+2. If different from current controlled app, auto-switches to it
+3. Media state updates to reflect new source
+4. `mediaChannel` field in MediaState updates
+
+### Manual Channel Selection
+
+```json
+// Request available channels
+{"action": "request_media_channels"}
+
+// Response (Type 4 binary on Podcast Info characteristic)
+// Channels: ["Spotify", "YouTube Music", "Podcasts"]
+
+// Select specific channel
+{"action": "select_media_channel", "channel": "Spotify"}
+```
+
+When selecting a channel:
+1. Currently playing app is paused (if different from selected)
+2. Selected app becomes the active controller
+3. Playback commands route to selected app
 
 ## Podcast Lazy Loading System
 
@@ -457,24 +653,181 @@ Use **nRF Connect** app on another Android device to inspect GATT characteristic
 
 ### Debugging
 
-Enable verbose BLE logging:
+The app uses structured logging with semantic tags for easy filtering:
+
 ```bash
-adb shell setprop log.tag.GattServerManager VERBOSE
-adb shell setprop log.tag.GattServerService VERBOSE
-adb shell setprop log.tag.AlbumArtTransmitter VERBOSE
-adb logcat -s GattServerManager:V GattServerService:V AlbumArtTransmitter:V PODCAST:I ALBUMART:I LYRICS:D
+# BLE operations
+adb logcat -s GattServerManager:V GattServerService:V AlbumArtTransmitter:V
+
+# Album art transfers (detailed)
+adb logcat -s ALBUMART:V
+
+# Podcast operations
+adb logcat -s PODCAST:I PodcastAudio:D
+
+# Lyrics fetching and transmission
+adb logcat -s LYRICS:D LyricsManager:D
+
+# Media channels
+adb logcat -s MEDIA_CHANNELS:I
+
+# Media controller and session
+adb logcat -s MediaControllerManager:D MediaSessionListener:D
+
+# Playback source tracking
+adb logcat -s PlaybackSourceTracker:D
+
+# Combined useful filter
+adb logcat -s GattServerManager:D GattServerService:D ALBUMART:I PODCAST:I LYRICS:I MEDIA_CHANNELS:I MediaControllerManager:D
+```
+
+Log prefixes used in verbose output:
+- `═══` Start/end of major operations
+- `───` Section separators
+- `📥` Incoming requests
+- `📤` Outgoing responses
+- `✅` Success
+- `⚠️` Warnings
+- `❌` Errors
+- `📦` Cache operations
+- `📡` Network/BLE transmission
+
+### Project Structure
+
+```
+app/src/main/kotlin/com/mediadash/android/
+├── MediaDashApplication.kt          # Hilt application entry point
+├── ble/
+│   ├── BleConstants.kt              # UUIDs, sizes, protocol constants
+│   ├── GattServerService.kt         # Foreground service (Hilt-injected)
+│   ├── GattServerManager.kt         # GATT server lifecycle & operations
+│   ├── AlbumArtTransmitter.kt       # Binary chunk transmission
+│   └── NotificationThrottler.kt     # Rate limiting
+├── data/
+│   ├── local/
+│   │   ├── PodcastDatabase.kt       # Room database
+│   │   ├── PodcastDao.kt            # Podcast DAO
+│   │   ├── EpisodeDao.kt            # Episode DAO (in PodcastDao.kt)
+│   │   ├── PodcastEntity.kt         # Room entities
+│   │   └── SettingsManager.kt       # DataStore preferences
+│   ├── media/
+│   │   ├── MediaControllerManager.kt  # External app control
+│   │   ├── MediaSessionListener.kt    # Session monitoring
+│   │   ├── PlaybackSourceTracker.kt   # Active source tracking
+│   │   ├── AlbumArtCache.kt           # LRU cache
+│   │   ├── AlbumArtFetcher.kt         # Image fetching & processing
+│   │   └── LyricsManager.kt           # Lyrics fetch & cache
+│   ├── remote/
+│   │   ├── ITunesApiService.kt        # iTunes podcast search
+│   │   ├── RssFeedParser.kt           # RSS feed parsing
+│   │   ├── LyricsApiService.kt        # LRCLIB API client
+│   │   └── OPMLParser.kt              # OPML import support
+│   └── repository/
+│       ├── MediaRepository.kt         # Interface
+│       ├── MediaRepositoryImpl.kt     # Implementation
+│       └── PodcastRepository.kt       # Podcast data access
+├── di/
+│   ├── AppModule.kt                   # Core dependencies
+│   ├── BleModule.kt                   # BLE dependencies
+│   ├── MediaModule.kt                 # Media dependencies
+│   └── PodcastModule.kt               # Podcast dependencies
+├── domain/
+│   ├── model/
+│   │   ├── MediaState.kt              # Playback state model
+│   │   ├── PlaybackCommand.kt         # Command model
+│   │   ├── AlbumArtChunk.kt           # Binary chunk model
+│   │   ├── Podcast.kt                 # Podcast & episode models
+│   │   ├── PodcastInfoResponse.kt     # BLE response types
+│   │   ├── CompactBleModels.kt        # Optimized BLE models
+│   │   ├── LyricsState.kt             # Lyrics models
+│   │   └── ConnectionStatus.kt        # BLE connection states
+│   └── usecase/
+│       └── ProcessPlaybackCommandUseCase.kt
+├── media/
+│   ├── PodcastPlayerService.kt        # Media3 service
+│   ├── PodcastPlayerManager.kt        # Playback management
+│   └── EpisodeDownloadManager.kt      # Offline downloads
+└── ui/
+    ├── MainActivity.kt                # Entry point
+    ├── MainViewModel.kt               # Main screen state
+    ├── theme/Theme.kt                 # Material 3 theme
+    ├── composables/                   # Reusable Compose components
+    │   ├── MainScreen.kt
+    │   ├── NowPlayingCard.kt
+    │   ├── ConnectionStatusCard.kt
+    │   └── ...
+    ├── podcast/
+    │   ├── PodcastPage.kt
+    │   └── PodcastViewModel.kt
+    └── player/
+        ├── PodcastPlayerPage.kt
+        └── PodcastPlayerViewModel.kt
 ```
 
 ### Adding New Playback Commands
 
-1. Add action constant to `PlaybackCommand.kt`
-2. Add to `VALID_ACTIONS` set
-3. Handle in `GattServerService.observeCommands()`
-4. Implement in `ProcessPlaybackCommandUseCase.kt`
+1. Add action constant to `PlaybackCommand.kt`:
+   ```kotlin
+   const val ACTION_MY_COMMAND = "my_command"
+   ```
+
+2. Add to `VALID_ACTIONS` set in the same file
+
+3. Handle in `GattServerService.observeCommands()`:
+   ```kotlin
+   PlaybackCommand.ACTION_MY_COMMAND -> {
+       Log.i("MY_TAG", "Processing my command")
+       handleMyCommand(command)
+   }
+   ```
+
+4. For data requests, implement handler method and use `gattServerManager.notify*()` to respond
+
+5. For playback commands, delegate to `ProcessPlaybackCommandUseCase` which routes to `MediaRepository`
+
+### Adding New BLE Characteristics
+
+1. Add UUID constant to `BleConstants.kt`:
+   ```kotlin
+   val MY_CHARACTERISTIC_UUID: UUID = UUID.fromString("0000a0da-0000-1000-8000-00805f9b34fb")
+   ```
+
+2. Add characteristic property in `GattServerManager.kt`:
+   ```kotlin
+   private var myCharacteristic: BluetoothGattCharacteristic? = null
+   ```
+
+3. Create characteristic in `setupService()`:
+   ```kotlin
+   myCharacteristic = BluetoothGattCharacteristic(
+       BleConstants.MY_CHARACTERISTIC_UUID,
+       BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+       BluetoothGattCharacteristic.PERMISSION_READ
+   ).apply {
+       addDescriptor(createCCCD())
+   }
+   service.addCharacteristic(myCharacteristic)
+   ```
+
+4. Add notify method for sending data:
+   ```kotlin
+   suspend fun notifyMyData(data: MyData) {
+       val characteristic = myCharacteristic ?: return
+       val server = gattServer ?: return
+       // ... serialize and send
+   }
+   ```
 
 ### Modifying BLE Protocol
 
 **IMPORTANT**: BLE UUIDs and data formats must match [Mercury](https://github.com/pautown/mercury) exactly. Any changes require coordinated updates on both sides.
+
+Protocol changes checklist:
+1. Update `BleConstants.kt` (Janus)
+2. Update `ble/constants.go` (Mercury)
+3. Update binary format handling in both projects
+4. Update this README documentation
+5. Test with nRF Connect before integration testing
 
 ## Related Projects
 
