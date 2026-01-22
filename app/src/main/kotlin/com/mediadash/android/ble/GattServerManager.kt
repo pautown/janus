@@ -598,21 +598,22 @@ class GattServerManager @Inject constructor(
      * Sends current time to a specific device for time synchronization.
      * Format: "timestamp|offset_minutes|timezone_id"
      *   - timestamp: Unix timestamp in seconds (UTC)
-     *   - offset_minutes: Timezone offset from UTC in minutes (e.g., -300 for EST)
+     *   - offset_minutes: Current timezone offset from UTC in minutes (includes DST)
      *   - timezone_id: IANA timezone ID (e.g., "America/New_York")
-     * Example: "1737590400|-300|America/New_York"
+     * Example: "1737590400|-300|America/New_York" (EST) or "1737590400|-240|America/New_York" (EDT)
      */
     @SuppressLint("MissingPermission")
     private suspend fun sendTimeSync(device: BluetoothDevice) {
         val characteristic = timeSyncCharacteristic ?: return
         val server = gattServer ?: return
 
-        // Get Unix timestamp in seconds
-        val timestamp = System.currentTimeMillis() / 1000
+        // Get current time in milliseconds
+        val currentTimeMs = System.currentTimeMillis()
+        val timestamp = currentTimeMs / 1000
 
-        // Get timezone information
+        // Get timezone information - use getOffset() to include DST adjustment
         val timeZone = java.util.TimeZone.getDefault()
-        val offsetMinutes = timeZone.rawOffset / 60000  // Convert milliseconds to minutes
+        val offsetMinutes = timeZone.getOffset(currentTimeMs) / 60000  // Includes DST
         val timezoneId = timeZone.id
 
         // Format: "timestamp|offset_minutes|timezone_id"
