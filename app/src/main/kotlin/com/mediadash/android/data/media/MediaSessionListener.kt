@@ -181,9 +181,27 @@ class MediaSessionListener : NotificationListenerService() {
     /**
      * Selects a specific media channel by name.
      * The name should match the app's display name (e.g., "Spotify", "YouTube Music").
+     * If a different channel is currently playing, it will be paused before switching.
      */
     fun selectChannel(channelName: String) {
         Log.i(TAG, "Selecting channel: $channelName")
+
+        // Before switching, pause any currently playing session that isn't the target
+        val currentlyPlaying = lastControllers.find { controller ->
+            controller.playbackState?.state == PlaybackState.STATE_PLAYING
+        }
+        if (currentlyPlaying != null) {
+            val playingAppName = getAppNameForPackage(currentlyPlaying.packageName)
+            if (playingAppName != channelName) {
+                Log.i(TAG, "Pausing currently playing app: $playingAppName")
+                try {
+                    currentlyPlaying.transportControls.pause()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to pause $playingAppName", e)
+                }
+            }
+        }
+
         selectedChannelName = channelName
 
         // Re-evaluate active session with the new selection
