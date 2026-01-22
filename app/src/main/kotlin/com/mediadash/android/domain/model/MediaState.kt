@@ -17,7 +17,8 @@ data class MediaState(
     val duration: Long,         // milliseconds
     val position: Long,         // milliseconds
     val volume: Int,            // 0-100
-    val albumArtHash: String? = null  // CRC32 as decimal string
+    val albumArtHash: String? = null,  // CRC32 as decimal string
+    val mediaChannel: String? = null   // App name being controlled (e.g., "Spotify", "YouTube Music")
 ) {
     companion object {
         val EMPTY = MediaState(
@@ -29,7 +30,8 @@ data class MediaState(
             duration = 0L,
             position = 0L,
             volume = 0,
-            albumArtHash = null
+            albumArtHash = null,
+            mediaChannel = null
         )
     }
 }

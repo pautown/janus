@@ -56,16 +56,24 @@ class MediaControllerManager @Inject constructor(
     private val _currentAlbumArtBitmap = MutableStateFlow<Bitmap?>(null)
     val currentAlbumArtBitmap: StateFlow<Bitmap?> = _currentAlbumArtBitmap.asStateFlow()
 
+    // Track which app is being controlled (e.g., "Spotify", "YouTube Music")
+    private val _controlledAppName = MutableStateFlow<String?>(null)
+    val controlledAppName: StateFlow<String?> = _controlledAppName.asStateFlow()
+
     private var lastAlbumArtHash: String? = null
     private var isPodcastActive = false
 
     /**
      * Sets the active media controller and registers callbacks.
      * This is called when an external app (Spotify, YouTube Music, etc.) becomes active.
+     *
+     * @param controller The MediaController for the active media session
+     * @param appName The human-readable app name (e.g., "Spotify", "YouTube Music")
      */
-    fun setActiveController(controller: MediaController) {
+    fun setActiveController(controller: MediaController, appName: String) {
         // Mark external app as active source
         isPodcastActive = false
+        _controlledAppName.value = appName
         // Unregister from previous controller
         controllerCallback?.let { callback ->
             activeController?.unregisterCallback(callback)
@@ -146,6 +154,7 @@ class MediaControllerManager @Inject constructor(
         _currentMediaState.value = null
         _currentAlbumArtChunks.value = null
         _currentAlbumArtBitmap.value = null
+        _controlledAppName.value = null
         lastAlbumArtHash = null
 
         Log.d(TAG, "Active controller cleared")
@@ -191,11 +200,12 @@ class MediaControllerManager @Inject constructor(
             duration = duration,
             position = position,
             volume = getCurrentVolume(),
-            albumArtHash = albumArtHash
+            albumArtHash = albumArtHash,
+            mediaChannel = "Podcasts"  // Podcast playback is handled internally
         )
 
         _currentMediaState.value = state
-        Log.d(TAG, "Podcast media state updated: $episodeTitle - $podcastTitle (hash: $albumArtHash)")
+        Log.d(TAG, "Podcast media state updated: $episodeTitle - $podcastTitle [Podcasts] (hash: $albumArtHash)")
 
         // Process artwork if URL is available and hash is new
         if (albumArtHash != null && albumArtHash != lastAlbumArtHash && !artworkUrl.isNullOrEmpty()) {
@@ -290,11 +300,12 @@ class MediaControllerManager @Inject constructor(
             duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L,
             position = playbackState?.position ?: 0L,
             volume = getCurrentVolume(),
-            albumArtHash = albumArtHash
+            albumArtHash = albumArtHash,
+            mediaChannel = _controlledAppName.value
         )
 
         _currentMediaState.value = state
-        Log.d(TAG, "Media state updated: ${state.trackTitle} - ${state.artist}")
+        Log.d(TAG, "Media state updated: ${state.trackTitle} - ${state.artist} [${state.mediaChannel}]")
     }
 
     /**

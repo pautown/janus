@@ -826,6 +826,79 @@ class GattServerManager @Inject constructor(
     }
 
     /**
+     * Notifies all connected devices with media channel list (audio apps with active sessions).
+     * Uses binary format: 2-byte count (big-endian) + for each channel: 1-byte len + N-byte name
+     * Header type=4 indicates media channels response.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifyMediaChannels(channels: List<String>) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("MEDIA_CHANNELS", "═══════════════════════════════════════════════")
+        Log.i("MEDIA_CHANNELS", "📤 SENDING MEDIA CHANNELS")
+        Log.i("MEDIA_CHANNELS", "   Channels: ${channels.size}")
+        channels.forEach { channel ->
+            Log.i("MEDIA_CHANNELS", "   - $channel")
+        }
+
+        // Build binary payload: 2-byte count + (1-byte len + name bytes) for each channel
+        val binaryData = buildMediaChannelsBinary(channels)
+        Log.i("MEDIA_CHANNELS", "   Binary size: ${binaryData.size} bytes")
+
+        // Split into 500-byte chunks if needed
+        val maxChunkSize = 500
+        val chunks = binaryData.toList().chunked(maxChunkSize)
+
+        Log.i("MEDIA_CHANNELS", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+
+                // Header: [type=4][chunkIndex][totalChunks][data...]
+                // type=4 indicates media channels response
+                val header = byteArrayOf(4, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                if (!sent) {
+                    Log.w(TAG, "Failed to notify media channels chunk $index to ${device.address}")
+                    Log.w("MEDIA_CHANNELS", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
+                    break
+                }
+            }
+            Log.i("MEDIA_CHANNELS", "   ✅ Sent to ${device.address}")
+        }
+        Log.i("MEDIA_CHANNELS", "═══════════════════════════════════════════════")
+    }
+
+    /**
+     * Builds binary payload for media channels.
+     * Format: 2-byte uint16 count (big-endian) + for each channel: 1-byte len + N-byte UTF-8 name
+     */
+    private fun buildMediaChannelsBinary(channels: List<String>): ByteArray {
+        val output = mutableListOf<Byte>()
+
+        // 2-byte count (big-endian)
+        val count = channels.size.coerceAtMost(65535)
+        output.add((count shr 8).toByte())
+        output.add((count and 0xFF).toByte())
+
+        // For each channel: 1-byte length + UTF-8 name bytes
+        for (channel in channels) {
+            val nameBytes = channel.toByteArray(Charsets.UTF_8)
+            val len = nameBytes.size.coerceAtMost(255)
+            output.add(len.toByte())
+            output.addAll(nameBytes.take(len).toList())
+        }
+
+        return output.toByteArray()
+    }
+
+    /**
      * Notifies all connected devices with lyrics data.
      * Sends data in chunks to accommodate BLE MTU limits.
      * Each CompactLyricsResponse is serialized to JSON, then split into 500-byte BLE packets.

@@ -47,6 +47,12 @@ class MediaSessionListener : NotificationListenerService() {
     private var mediaSessionManager: MediaSessionManager? = null
     private var isListening = false
 
+    // Selected channel to control (null = auto-select playing/first)
+    private var selectedChannelName: String? = null
+
+    // Last known controllers for channel selection
+    private var lastControllers: List<MediaController> = emptyList()
+
     private val sessionListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
         Log.d(TAG, "Active sessions changed: ${controllers?.size ?: 0} sessions")
         controllers?.let { updateActiveSession(it) }
@@ -111,24 +117,106 @@ class MediaSessionListener : NotificationListenerService() {
 
     /**
      * Updates the active media controller based on the current sessions.
-     * Prioritizes playing sessions, then falls back to the most recently active.
+     * Priority: 1. Selected channel if set, 2. New playing session (auto-switch), 3. First available
      */
     private fun updateActiveSession(controllers: List<MediaController>) {
+        lastControllers = controllers
+
         if (controllers.isEmpty()) {
             Log.d(TAG, "No active media sessions")
             mediaControllerManager.clearActiveController()
             return
         }
 
-        // Find a playing session first
+        // Check if a new session started playing (for auto-switch)
         val playingController = controllers.find { controller ->
             controller.playbackState?.state == PlaybackState.STATE_PLAYING
         }
 
-        // Use playing session, or fall back to first available
-        val selectedController = playingController ?: controllers.first()
+        // If something new started playing, auto-switch to it
+        if (playingController != null) {
+            val playingAppName = getAppNameForPackage(playingController.packageName)
+            val currentControlledAppName = mediaControllerManager.controlledAppName.value
 
-        Log.d(TAG, "Selected media session: ${selectedController.packageName}")
-        mediaControllerManager.setActiveController(selectedController)
+            // If this is a different app that just started playing, switch to it
+            if (playingAppName != currentControlledAppName) {
+                Log.i(TAG, "Auto-switching to newly playing app: $playingAppName")
+                selectedChannelName = playingAppName
+            }
+        }
+
+        // Try to find the selected channel
+        var targetController: MediaController? = null
+        if (!selectedChannelName.isNullOrEmpty()) {
+            targetController = controllers.find { controller ->
+                getAppNameForPackage(controller.packageName) == selectedChannelName
+            }
+            if (targetController == null) {
+                Log.w(TAG, "Selected channel '$selectedChannelName' not found in active sessions")
+            }
+        }
+
+        // Fall back to playing session or first available
+        val finalController = targetController
+            ?: playingController
+            ?: controllers.first()
+
+        val appName = getAppNameForPackage(finalController.packageName)
+        Log.d(TAG, "Selected media session: ${finalController.packageName} ($appName)")
+        mediaControllerManager.setActiveController(finalController, appName)
+    }
+
+    /**
+     * Converts a package name to a human-readable app name.
+     */
+    private fun getAppNameForPackage(packageName: String): String {
+        return try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (e: Exception) {
+            packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+        }
+    }
+
+    /**
+     * Selects a specific media channel by name.
+     * The name should match the app's display name (e.g., "Spotify", "YouTube Music").
+     */
+    fun selectChannel(channelName: String) {
+        Log.i(TAG, "Selecting channel: $channelName")
+        selectedChannelName = channelName
+
+        // Re-evaluate active session with the new selection
+        if (lastControllers.isNotEmpty()) {
+            updateActiveSession(lastControllers)
+        }
+    }
+
+    /**
+     * Gets the currently selected channel name.
+     */
+    fun getSelectedChannel(): String? = selectedChannelName
+
+    /**
+     * Gets the list of all active media channel app names (package names converted to display names).
+     * Returns empty list if no sessions are active or permission not granted.
+     */
+    fun getActiveMediaChannels(): List<String> {
+        val componentName = ComponentName(this, MediaSessionListener::class.java)
+        val controllers = mediaSessionManager?.getActiveSessions(componentName) ?: emptyList()
+
+        return controllers.mapNotNull { controller ->
+            // Convert package name to human-readable app name
+            try {
+                val packageManager = packageManager
+                val appInfo = packageManager.getApplicationInfo(controller.packageName, 0)
+                packageManager.getApplicationLabel(appInfo).toString()
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not get app name for ${controller.packageName}", e)
+                // Fallback to package name if app name not found
+                controller.packageName.substringAfterLast('.')
+                    .replaceFirstChar { it.uppercase() }
+            }
+        }.distinct()
     }
 }

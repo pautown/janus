@@ -199,6 +199,20 @@ class GattServerService : Service() {
                         Log.i("PODCAST", "   Source: golang_ble_client via BLE")
                         handlePodcastEpisodesRequest(podcastId, offset, limit)
                     }
+                    PlaybackCommand.ACTION_REQUEST_MEDIA_CHANNELS -> {
+                        Log.i("MEDIA_CHANNELS", "═══════════════════════════════════════════════════════")
+                        Log.i("MEDIA_CHANNELS", "📥 REQUEST: Media channel apps list")
+                        Log.i("MEDIA_CHANNELS", "   Source: golang_ble_client via BLE")
+                        handleMediaChannelsRequest()
+                    }
+                    PlaybackCommand.ACTION_SELECT_MEDIA_CHANNEL -> {
+                        val channelName = command.channel ?: ""
+                        Log.i("MEDIA_CHANNELS", "═══════════════════════════════════════════════════════")
+                        Log.i("MEDIA_CHANNELS", "🎯 SELECT: Media channel")
+                        Log.i("MEDIA_CHANNELS", "   Channel: $channelName")
+                        Log.i("MEDIA_CHANNELS", "   Source: golang_ble_client via BLE")
+                        handleSelectMediaChannel(channelName)
+                    }
                     PlaybackCommand.ACTION_PLAY_PODCAST_EPISODE -> {
                         Log.i("PODCAST", "═══════════════════════════════════════════════════════")
                         Log.i("PODCAST", "▶️ PLAY: Podcast episode")
@@ -303,6 +317,52 @@ class GattServerService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e("PODCAST", "❌ Error handling podcast episodes request", e)
+            }
+        }
+    }
+
+    private fun handleMediaChannelsRequest() {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                // Get active media channels from MediaSessionListener
+                val listener = com.mediadash.android.data.media.MediaSessionListener.getInstance()
+                val channels = listener?.getActiveMediaChannels() ?: emptyList()
+
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.i("MEDIA_CHANNELS", "📤 RESPONSE: Media channels")
+                Log.i("MEDIA_CHANNELS", "   Channels found: ${channels.size}")
+                channels.forEach { channel ->
+                    Log.i("MEDIA_CHANNELS", "   - $channel")
+                }
+                Log.i("MEDIA_CHANNELS", "   Processing time: ${elapsed}ms")
+
+                gattServerManager.notifyMediaChannels(channels)
+                Log.i("MEDIA_CHANNELS", "✅ Media channels transmitted via BLE")
+            } catch (e: Exception) {
+                Log.e("MEDIA_CHANNELS", "❌ Error handling media channels request", e)
+            }
+        }
+    }
+
+    private fun handleSelectMediaChannel(channelName: String) {
+        serviceScope.launch {
+            try {
+                if (channelName.isEmpty()) {
+                    Log.w("MEDIA_CHANNELS", "⚠️ Empty channel name in select request")
+                    return@launch
+                }
+
+                val listener = com.mediadash.android.data.media.MediaSessionListener.getInstance()
+                if (listener != null) {
+                    listener.selectChannel(channelName)
+                    Log.i("MEDIA_CHANNELS", "✅ Selected media channel: $channelName")
+                } else {
+                    Log.w("MEDIA_CHANNELS", "⚠️ MediaSessionListener not available")
+                }
+            } catch (e: Exception) {
+                Log.e("MEDIA_CHANNELS", "❌ Error selecting media channel", e)
             }
         }
     }

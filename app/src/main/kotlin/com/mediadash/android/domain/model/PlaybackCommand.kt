@@ -14,7 +14,8 @@ data class PlaybackCommand(
     val episodeHash: String? = null,    // For play_episode: episode hash (CRC32 of feedUrl+pubDate+duration)
     val episodeIndex: Int = -1,         // DEPRECATED: use episodeHash instead
     val offset: Int = 0,                // For request_podcast_episodes: pagination offset
-    val limit: Int = 15                 // For request_podcast_episodes: episodes per page
+    val limit: Int = 15,                // For request_podcast_episodes: episodes per page
+    val channel: String? = null         // For select_media_channel: app name to control
 ) {
     companion object {
         // Valid action types
@@ -34,6 +35,12 @@ data class PlaybackCommand(
         const val ACTION_REQUEST_RECENT_EPISODES = "request_recent_episodes"     // Get recent episodes across all podcasts
         const val ACTION_REQUEST_PODCAST_EPISODES = "request_podcast_episodes"   // Get episodes for specific podcast (paginated)
 
+        // Media channels request (list of audio apps with active sessions)
+        const val ACTION_REQUEST_MEDIA_CHANNELS = "request_media_channels"
+
+        // Media channel selection (switch which app to control)
+        const val ACTION_SELECT_MEDIA_CHANNEL = "select_media_channel"
+
         // Legacy - still supported for backwards compatibility
         const val ACTION_PODCAST_INFO_REQUEST = "request_podcast_info"
 
@@ -46,7 +53,9 @@ data class PlaybackCommand(
             ACTION_PLAY_PODCAST_EPISODE,  // DEPRECATED
             ACTION_REQUEST_PODCAST_LIST,
             ACTION_REQUEST_RECENT_EPISODES,
-            ACTION_REQUEST_PODCAST_EPISODES
+            ACTION_REQUEST_PODCAST_EPISODES,
+            ACTION_REQUEST_MEDIA_CHANNELS,
+            ACTION_SELECT_MEDIA_CHANNEL
         )
     }
 
