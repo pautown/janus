@@ -63,6 +63,27 @@ class MediaControllerManager @Inject constructor(
     private var lastAlbumArtHash: String? = null
     private var isPodcastActive = false
 
+    // Flag to suppress media state updates during multi-skip queue operations
+    // When true, metadata/playback state changes won't trigger BLE notifications
+    @Volatile
+    private var suppressMediaUpdates = false
+
+    /**
+     * Set whether to suppress media state updates.
+     * Used during multi-skip queue operations to prevent sending intermediate track info.
+     *
+     * @param suppress true to suppress updates, false to allow them
+     */
+    fun setSuppressMediaUpdates(suppress: Boolean) {
+        suppressMediaUpdates = suppress
+        Log.d(TAG, "Media updates ${if (suppress) "suppressed" else "enabled"}")
+    }
+
+    /**
+     * Check if media updates are currently suppressed.
+     */
+    fun isMediaUpdatesSuppressed(): Boolean = suppressMediaUpdates
+
     /**
      * Sets the active media controller and registers callbacks.
      * This is called when an external app (Spotify, YouTube Music, etc.) becomes active.
@@ -279,6 +300,12 @@ class MediaControllerManager @Inject constructor(
     }
 
     private fun updateMediaState() {
+        // Skip update if suppressed (e.g., during multi-skip queue operations)
+        if (suppressMediaUpdates) {
+            Log.d(TAG, "Media state update suppressed (queue skip in progress)")
+            return
+        }
+
         val controller = activeController ?: return
         val playbackState = controller.playbackState
         val metadata = controller.metadata
@@ -319,6 +346,11 @@ class MediaControllerManager @Inject constructor(
      * This prevents the race condition where Go client requests a hash before chunks are prepared.
      */
     private suspend fun processAlbumArtAndUpdateState(metadata: MediaMetadata?) {
+        // Skip processing if suppressed (e.g., during multi-skip queue operations)
+        if (suppressMediaUpdates) {
+            Log.d(TAG, "Album art and state update suppressed (queue skip in progress)")
+            return
+        }
         // First, prepare album art chunks
         if (metadata != null) {
             val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: ""

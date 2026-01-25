@@ -167,9 +167,15 @@ class SpotifyQueueManager @Inject constructor(
      *
      * @param queueIndex 0-based index in the queue
      * @param mediaController The active MediaController for local skip commands
+     * @param onBeforeSkip Optional callback called before each skip with (skipNumber, totalSkips, isFinalSkip).
+     *                     Use this to suppress media updates during intermediate skips.
      * @return true if successful, false otherwise
      */
-    suspend fun skipToPositionLocal(queueIndex: Int, mediaController: android.media.session.MediaController?): Boolean {
+    suspend fun skipToPositionLocal(
+        queueIndex: Int,
+        mediaController: android.media.session.MediaController?,
+        onBeforeSkip: ((skipNumber: Int, totalSkips: Int, isFinalSkip: Boolean) -> Unit)? = null
+    ): Boolean {
         if (mediaController == null) {
             Log.e(TAG, "Cannot skip: no active MediaController")
             return false
@@ -189,7 +195,12 @@ class SpotifyQueueManager @Inject constructor(
             val transportControls = mediaController.transportControls
 
             for (i in 1..skipsNeeded) {
-                Log.d(TAG, "Local skip $i of $skipsNeeded...")
+                val isFinalSkip = (i == skipsNeeded)
+
+                // Notify caller before each skip (for suppressing intermediate updates)
+                onBeforeSkip?.invoke(i, skipsNeeded, isFinalSkip)
+
+                Log.d(TAG, "Local skip $i of $skipsNeeded (final: $isFinalSkip)...")
                 transportControls.skipToNext()
 
                 // Small delay between skips to let the player process

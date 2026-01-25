@@ -576,12 +576,33 @@ class GattServerService : Service() {
                 val mediaController = mediaControllerManager.getActiveController()
                 if (mediaController != null) {
                     Log.i("QUEUE", "🎵 Using local transport controls for skip")
-                    success = spotifyQueueManager.skipToPositionLocal(queueIndex, mediaController)
+
+                    // Use callback to suppress media updates during intermediate skips
+                    // This prevents sending track info for tracks we're skipping past
+                    success = spotifyQueueManager.skipToPositionLocal(
+                        queueIndex,
+                        mediaController
+                    ) { skipNumber, totalSkips, isFinalSkip ->
+                        if (!isFinalSkip) {
+                            // Suppress updates for intermediate skips
+                            mediaControllerManager.setSuppressMediaUpdates(true)
+                            Log.d("QUEUE", "   Suppressing media updates for skip $skipNumber/$totalSkips")
+                        } else {
+                            // Enable updates for the final skip so we get the actual track info
+                            mediaControllerManager.setSuppressMediaUpdates(false)
+                            Log.d("QUEUE", "   Enabling media updates for final skip $skipNumber/$totalSkips")
+                        }
+                    }
+
+                    // Ensure updates are re-enabled even if skip failed partway through
+                    mediaControllerManager.setSuppressMediaUpdates(false)
                 }
 
                 // Fallback to Spotify API if local skip failed or no controller
                 if (!success && spotifyQueueManager.isConnected()) {
                     Log.i("QUEUE", "🌐 Falling back to Spotify API for skip")
+                    // For API skips, we can't easily suppress updates since they're async
+                    // The API is slower anyway, so less of an issue
                     success = spotifyQueueManager.skipToPositionApi(queueIndex)
                 }
 
@@ -597,6 +618,8 @@ class GattServerService : Service() {
                     Log.w("QUEUE", "⚠️ Failed to skip to queue position $queueIndex")
                 }
             } catch (e: Exception) {
+                // Ensure updates are re-enabled on error
+                mediaControllerManager.setSuppressMediaUpdates(false)
                 Log.e("QUEUE", "❌ Error handling queue shift", e)
             }
         }
