@@ -161,13 +161,59 @@ class SpotifyQueueManager @Inject constructor(
     }
 
     /**
-     * Skip to a specific position in the queue.
+     * Skip to a specific position in the queue using local MediaController.
+     * This is faster than using the Spotify API as it doesn't require network calls.
+     * Position 0 = first track in queue (requires 1 skip), position 1 = second track (2 skips), etc.
+     *
+     * @param queueIndex 0-based index in the queue
+     * @param mediaController The active MediaController for local skip commands
+     * @return true if successful, false otherwise
+     */
+    suspend fun skipToPositionLocal(queueIndex: Int, mediaController: android.media.session.MediaController?): Boolean {
+        if (mediaController == null) {
+            Log.e(TAG, "Cannot skip: no active MediaController")
+            return false
+        }
+
+        if (queueIndex < 0) {
+            Log.e(TAG, "Invalid queue index: $queueIndex")
+            return false
+        }
+
+        return try {
+            // Need to skip (queueIndex + 1) times to reach the desired track
+            // queueIndex 0 = first track in queue = 1 skip
+            val skipsNeeded = queueIndex + 1
+            Log.d(TAG, "=== Skipping to queue position $queueIndex (${skipsNeeded} local skips) ===")
+
+            val transportControls = mediaController.transportControls
+
+            for (i in 1..skipsNeeded) {
+                Log.d(TAG, "Local skip $i of $skipsNeeded...")
+                transportControls.skipToNext()
+
+                // Small delay between skips to let the player process
+                if (i < skipsNeeded) {
+                    delay(150)
+                }
+            }
+
+            Log.d(TAG, "Successfully skipped to queue position $queueIndex using local transport controls")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception during local skip: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Skip to a specific position in the queue using Spotify API (fallback).
      * Position 0 = first track in queue (requires 1 skip), position 1 = second track (2 skips), etc.
      *
      * @param queueIndex 0-based index in the queue
      * @return true if successful, false otherwise
      */
-    suspend fun skipToPosition(queueIndex: Int): Boolean {
+    suspend fun skipToPositionApi(queueIndex: Int): Boolean {
         val accessToken = getAccessToken()
         if (accessToken == null) {
             Log.e(TAG, "Cannot skip: no valid access token")
@@ -183,13 +229,13 @@ class SpotifyQueueManager @Inject constructor(
             // Need to skip (queueIndex + 1) times to reach the desired track
             // queueIndex 0 = first track in queue = 1 skip
             val skipsNeeded = queueIndex + 1
-            Log.d(TAG, "=== Skipping to queue position $queueIndex (${skipsNeeded} skips) ===")
+            Log.d(TAG, "=== Skipping to queue position $queueIndex (${skipsNeeded} API skips) ===")
 
             val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
 
             var success = true
             for (i in 1..skipsNeeded) {
-                Log.d(TAG, "Skip $i of $skipsNeeded...")
+                Log.d(TAG, "API skip $i of $skipsNeeded...")
                 val response = withContext(Dispatchers.IO) {
                     apiClient.apiService.skipToNext()
                 }
@@ -211,7 +257,7 @@ class SpotifyQueueManager @Inject constructor(
             }
 
             if (success) {
-                Log.d(TAG, "Successfully skipped to queue position $queueIndex")
+                Log.d(TAG, "Successfully skipped to queue position $queueIndex via API")
             }
             success
         } catch (e: Exception) {

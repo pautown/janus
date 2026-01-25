@@ -569,24 +569,62 @@ class GattServerService : Service() {
                     return@launch
                 }
 
-                // Check if Spotify is connected
-                if (!spotifyQueueManager.isConnected()) {
-                    Log.w("QUEUE", "⚠️ Spotify not connected, cannot shift queue")
-                    return@launch
+                val startTime = System.currentTimeMillis()
+                var success = false
+
+                // Try local skip first (faster, no network required)
+                val mediaController = mediaControllerManager.getActiveController()
+                if (mediaController != null) {
+                    Log.i("QUEUE", "🎵 Using local transport controls for skip")
+                    success = spotifyQueueManager.skipToPositionLocal(queueIndex, mediaController)
                 }
 
-                val startTime = System.currentTimeMillis()
-                val success = spotifyQueueManager.skipToPosition(queueIndex)
+                // Fallback to Spotify API if local skip failed or no controller
+                if (!success && spotifyQueueManager.isConnected()) {
+                    Log.i("QUEUE", "🌐 Falling back to Spotify API for skip")
+                    success = spotifyQueueManager.skipToPositionApi(queueIndex)
+                }
+
                 val elapsed = System.currentTimeMillis() - startTime
 
                 if (success) {
                     Log.i("QUEUE", "✅ Skipped to queue position $queueIndex in ${elapsed}ms")
+
+                    // Wait a moment for playback to update, then fetch and send new queue
+                    kotlinx.coroutines.delay(500)
+                    fetchAndSendQueueUpdate()
                 } else {
                     Log.w("QUEUE", "⚠️ Failed to skip to queue position $queueIndex")
                 }
             } catch (e: Exception) {
                 Log.e("QUEUE", "❌ Error handling queue shift", e)
             }
+        }
+    }
+
+    /**
+     * Fetches the current queue from Spotify and sends it via BLE automatically.
+     * This is called after queue operations to keep the client in sync.
+     */
+    private suspend fun fetchAndSendQueueUpdate() {
+        try {
+            if (!spotifyQueueManager.isConnected()) {
+                Log.w("QUEUE", "⚠️ Cannot fetch queue update: Spotify not connected")
+                return
+            }
+
+            Log.i("QUEUE", "🔄 Fetching queue update after skip...")
+            val queueResponse = spotifyQueueManager.fetchQueue()
+
+            if (queueResponse != null) {
+                Log.i("QUEUE", "📤 Sending queue update via BLE (${queueResponse.tracks.size} tracks)")
+                gattServerManager.notifyQueue(queueResponse)
+                Log.i("QUEUE", "✅ Queue update sent successfully")
+            } else {
+                Log.w("QUEUE", "⚠️ Failed to fetch queue update")
+            }
+        } catch (e: Exception) {
+            Log.e("QUEUE", "❌ Error fetching/sending queue update", e)
         }
     }
 
