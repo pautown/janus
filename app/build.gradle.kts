@@ -112,6 +112,13 @@ dependencies {
     // RSS Parser
     implementation("com.prof18.rssparser:rssparser:6.0.7")
 
+    // SpotSDK - Spotify OAuth and API integration (local module)
+    // Includes: AppAuth, Retrofit, OkHttp, DataStore, Coroutines
+    implementation(project(":spotsdk"))
+
+    // DataStore - for token persistence
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

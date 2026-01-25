@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 import com.mediadash.android.ui.MainViewModel
 import com.mediadash.android.ui.player.PodcastPlayerPage
 import com.mediadash.android.ui.podcast.PodcastPage
+import com.mediadash.android.ui.spotify.SpotifyAuthPage
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -47,8 +48,8 @@ fun MainScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
 
-    // Pager state for 3 pages (0: NowPlaying, 1: Podcasts, 2: PodcastPlayer)
-    val pagerState = rememberPagerState(pageCount = { 3 })
+    // Pager state for 4 pages (0: NowPlaying, 1: Podcasts, 2: PodcastPlayer, 3: Spotify)
+    val pagerState = rememberPagerState(pageCount = { 4 })
     val coroutineScope = rememberCoroutineScope()
 
     // Handle back button: return to page 0 if not already there
@@ -89,6 +90,7 @@ fun MainScreen(
                 )
                 1 -> PodcastPage()
                 2 -> PodcastPlayerPage()
+                3 -> SpotifyAuthPage()
             }
         }
 
@@ -102,7 +104,7 @@ fun MainScreen(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            repeat(3) { iteration ->
+            repeat(4) { iteration ->
                 val color = if (pagerState.currentPage == iteration) {
                     MaterialTheme.colorScheme.primary
                 } else {
