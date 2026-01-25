@@ -4,6 +4,9 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.media.AudioManager
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.preferencesDataStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -15,6 +18,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import javax.inject.Qualifier
 import javax.inject.Singleton
+
+// Single DataStore instance for Spotify auth - defined once at module level
+private val Context.spotifyDataStore: DataStore<Preferences> by preferencesDataStore(name = "spotify_auth")
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class SpotifyDataStore
 
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
@@ -63,5 +73,12 @@ object AppModule {
     @ApplicationScope
     fun provideApplicationScope(): CoroutineScope {
         return CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    }
+
+    @Provides
+    @Singleton
+    @SpotifyDataStore
+    fun provideSpotifyDataStore(@ApplicationContext context: Context): DataStore<Preferences> {
+        return context.spotifyDataStore
     }
 }

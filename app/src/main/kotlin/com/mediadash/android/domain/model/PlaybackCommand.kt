@@ -15,7 +15,9 @@ data class PlaybackCommand(
     val episodeIndex: Int = -1,         // DEPRECATED: use episodeHash instead
     val offset: Int = 0,                // For request_podcast_episodes: pagination offset
     val limit: Int = 15,                // For request_podcast_episodes: episodes per page
-    val channel: String? = null         // For select_media_channel: app name to control
+    val channel: String? = null,        // For select_media_channel: app name to control
+    val service: String? = null,        // For check_connection: service name (e.g., "spotify")
+    val queueIndex: Int = -1            // For queue_shift: position in queue to skip to (0-based)
 ) {
     companion object {
         // Valid action types
@@ -41,6 +43,14 @@ data class PlaybackCommand(
         // Media channel selection (switch which app to control)
         const val ACTION_SELECT_MEDIA_CHANNEL = "select_media_channel"
 
+        // Connection status requests (check if services are authenticated/connected)
+        const val ACTION_CHECK_CONNECTION = "check_connection"           // Check specific service (uses 'service' field)
+        const val ACTION_CHECK_ALL_CONNECTIONS = "check_all_connections" // Check all services
+
+        // Queue requests (for Spotify and other authorized services)
+        const val ACTION_REQUEST_QUEUE = "request_queue"                 // Get current playback queue
+        const val ACTION_QUEUE_SHIFT = "queue_shift"                     // Skip to specific position in queue (uses 'queueIndex' field)
+
         // Legacy - still supported for backwards compatibility
         const val ACTION_PODCAST_INFO_REQUEST = "request_podcast_info"
 
@@ -55,7 +65,11 @@ data class PlaybackCommand(
             ACTION_REQUEST_RECENT_EPISODES,
             ACTION_REQUEST_PODCAST_EPISODES,
             ACTION_REQUEST_MEDIA_CHANNELS,
-            ACTION_SELECT_MEDIA_CHANNEL
+            ACTION_SELECT_MEDIA_CHANNEL,
+            ACTION_CHECK_CONNECTION,
+            ACTION_CHECK_ALL_CONNECTIONS,
+            ACTION_REQUEST_QUEUE,
+            ACTION_QUEUE_SHIFT
         )
     }
 

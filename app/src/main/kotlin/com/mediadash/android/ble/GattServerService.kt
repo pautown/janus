@@ -14,6 +14,9 @@ import androidx.core.app.NotificationCompat
 import com.mediadash.android.R
 import com.mediadash.android.data.media.LyricsManager
 import com.mediadash.android.data.repository.MediaRepository
+import com.mediadash.android.data.spotify.SpotifyConnectionChecker
+import com.mediadash.android.data.spotify.SpotifyQueueManager
+import com.mediadash.android.domain.model.ConnectionStatusResponse
 import com.mediadash.android.domain.model.LyricsRequest
 import com.mediadash.android.domain.model.PlaybackCommand
 import com.mediadash.android.domain.usecase.ProcessPlaybackCommandUseCase
@@ -64,6 +67,12 @@ class GattServerService : Service() {
 
     @Inject
     lateinit var mediaControllerManager: com.mediadash.android.data.media.MediaControllerManager
+
+    @Inject
+    lateinit var spotifyConnectionChecker: SpotifyConnectionChecker
+
+    @Inject
+    lateinit var spotifyQueueManager: SpotifyQueueManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var mediaStateJob: Job? = null
@@ -215,6 +224,34 @@ class GattServerService : Service() {
                         Log.i("MEDIA_CHANNELS", "   Channel: $channelName")
                         Log.i("MEDIA_CHANNELS", "   Source: golang_ble_client via BLE")
                         handleSelectMediaChannel(channelName)
+                    }
+                    PlaybackCommand.ACTION_CHECK_CONNECTION -> {
+                        val serviceName = command.service ?: ""
+                        Log.i("CONNECTIONS", "═══════════════════════════════════════════════════════")
+                        Log.i("CONNECTIONS", "🔌 CHECK: Connection status")
+                        Log.i("CONNECTIONS", "   Service: $serviceName")
+                        Log.i("CONNECTIONS", "   Source: golang_ble_client via BLE")
+                        handleCheckConnectionRequest(serviceName)
+                    }
+                    PlaybackCommand.ACTION_CHECK_ALL_CONNECTIONS -> {
+                        Log.i("CONNECTIONS", "═══════════════════════════════════════════════════════")
+                        Log.i("CONNECTIONS", "🔌 CHECK: All connections status")
+                        Log.i("CONNECTIONS", "   Source: golang_ble_client via BLE")
+                        handleCheckAllConnectionsRequest()
+                    }
+                    PlaybackCommand.ACTION_REQUEST_QUEUE -> {
+                        Log.i("QUEUE", "═══════════════════════════════════════════════════════")
+                        Log.i("QUEUE", "📋 REQUEST: Playback queue")
+                        Log.i("QUEUE", "   Source: golang_ble_client via BLE")
+                        handleQueueRequest()
+                    }
+                    PlaybackCommand.ACTION_QUEUE_SHIFT -> {
+                        val queueIndex = command.queueIndex
+                        Log.i("QUEUE", "═══════════════════════════════════════════════════════")
+                        Log.i("QUEUE", "⏭️ QUEUE SHIFT: Skip to position")
+                        Log.i("QUEUE", "   Index: $queueIndex")
+                        Log.i("QUEUE", "   Source: golang_ble_client via BLE")
+                        handleQueueShift(queueIndex)
                     }
                     PlaybackCommand.ACTION_PLAY_PODCAST_EPISODE -> {
                         Log.i("PODCAST", "═══════════════════════════════════════════════════════")
@@ -385,6 +422,170 @@ class GattServerService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e("MEDIA_CHANNELS", "❌ Error selecting media channel", e)
+            }
+        }
+    }
+
+    private fun handleCheckConnectionRequest(serviceName: String) {
+        serviceScope.launch {
+            try {
+                if (serviceName.isEmpty()) {
+                    Log.w("CONNECTIONS", "⚠️ Empty service name in check request")
+                    return@launch
+                }
+
+                val startTime = System.currentTimeMillis()
+                val services = mutableMapOf<String, String>()
+
+                when (serviceName.lowercase()) {
+                    ConnectionStatusResponse.SERVICE_SPOTIFY -> {
+                        val status = spotifyConnectionChecker.getConnectionStatus()
+                        services[ConnectionStatusResponse.SERVICE_SPOTIFY] = status
+                        Log.i("CONNECTIONS", "   Spotify status: $status")
+                    }
+                    else -> {
+                        Log.w("CONNECTIONS", "⚠️ Unknown service: $serviceName")
+                        services[serviceName] = "error:unknown_service"
+                    }
+                }
+
+                val response = ConnectionStatusResponse(
+                    services = services,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.i("CONNECTIONS", "📤 RESPONSE: Connection status")
+                Log.i("CONNECTIONS", "   Services checked: ${services.size}")
+                Log.i("CONNECTIONS", "   Processing time: ${elapsed}ms")
+
+                gattServerManager.notifyConnectionStatus(response)
+                Log.i("CONNECTIONS", "✅ Connection status transmitted via BLE")
+            } catch (e: Exception) {
+                Log.e("CONNECTIONS", "❌ Error checking connection", e)
+            }
+        }
+    }
+
+    private fun handleCheckAllConnectionsRequest() {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+                val services = mutableMapOf<String, String>()
+
+                // Check Spotify
+                val spotifyStatus = spotifyConnectionChecker.getConnectionStatus()
+                services[ConnectionStatusResponse.SERVICE_SPOTIFY] = spotifyStatus
+                Log.i("CONNECTIONS", "   Spotify status: $spotifyStatus")
+
+                // Add more services here as they are implemented
+                // services[ConnectionStatusResponse.SERVICE_YOUTUBE] = youtubeChecker.getConnectionStatus()
+                // etc.
+
+                val response = ConnectionStatusResponse(
+                    services = services,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.i("CONNECTIONS", "📤 RESPONSE: All connections status")
+                Log.i("CONNECTIONS", "   Services checked: ${services.size}")
+                services.forEach { (service, status) ->
+                    Log.i("CONNECTIONS", "   - $service: $status")
+                }
+                Log.i("CONNECTIONS", "   Processing time: ${elapsed}ms")
+
+                gattServerManager.notifyConnectionStatus(response)
+                Log.i("CONNECTIONS", "✅ All connections status transmitted via BLE")
+            } catch (e: Exception) {
+                Log.e("CONNECTIONS", "❌ Error checking all connections", e)
+            }
+        }
+    }
+
+    private fun handleQueueRequest() {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+                Log.i("QUEUE", "   Starting queue request handling...")
+
+                // Check if Spotify is connected
+                if (!spotifyQueueManager.isConnected()) {
+                    Log.w("QUEUE", "⚠️ Spotify not connected, sending empty queue response")
+                    // Send empty queue response so client knows we received the request
+                    val emptyResponse = com.mediadash.android.domain.model.QueueResponse(
+                        service = "spotify",
+                        tracks = emptyList(),
+                        currentlyPlaying = null,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    gattServerManager.notifyQueue(emptyResponse)
+                    Log.i("QUEUE", "✅ Empty queue response sent (Spotify not connected)")
+                    return@launch
+                }
+
+                Log.i("QUEUE", "   Spotify is connected, fetching queue...")
+                val response = spotifyQueueManager.fetchQueue()
+
+                if (response != null) {
+                    val elapsed = System.currentTimeMillis() - startTime
+                    Log.i("QUEUE", "📤 RESPONSE: Playback queue")
+                    Log.i("QUEUE", "   Service: ${response.service}")
+                    Log.i("QUEUE", "   Currently playing: ${response.currentlyPlaying?.title ?: "(none)"}")
+                    Log.i("QUEUE", "   Queue tracks: ${response.tracks.size}")
+                    response.tracks.take(3).forEach { track ->
+                        Log.d("QUEUE", "   - ${track.title} - ${track.artist}")
+                    }
+                    if (response.tracks.size > 3) {
+                        Log.d("QUEUE", "   ... and ${response.tracks.size - 3} more")
+                    }
+                    Log.i("QUEUE", "   Processing time: ${elapsed}ms")
+
+                    gattServerManager.notifyQueue(response)
+                    Log.i("QUEUE", "✅ Queue transmitted via BLE")
+                } else {
+                    Log.w("QUEUE", "⚠️ Failed to fetch queue from Spotify API")
+                    // Send empty response so client knows we tried
+                    val emptyResponse = com.mediadash.android.domain.model.QueueResponse(
+                        service = "spotify",
+                        tracks = emptyList(),
+                        currentlyPlaying = null,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    gattServerManager.notifyQueue(emptyResponse)
+                    Log.i("QUEUE", "✅ Empty queue response sent (API fetch failed)")
+                }
+            } catch (e: Exception) {
+                Log.e("QUEUE", "❌ Error handling queue request", e)
+            }
+        }
+    }
+
+    private fun handleQueueShift(queueIndex: Int) {
+        serviceScope.launch {
+            try {
+                if (queueIndex < 0) {
+                    Log.w("QUEUE", "⚠️ Invalid queue index: $queueIndex")
+                    return@launch
+                }
+
+                // Check if Spotify is connected
+                if (!spotifyQueueManager.isConnected()) {
+                    Log.w("QUEUE", "⚠️ Spotify not connected, cannot shift queue")
+                    return@launch
+                }
+
+                val startTime = System.currentTimeMillis()
+                val success = spotifyQueueManager.skipToPosition(queueIndex)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (success) {
+                    Log.i("QUEUE", "✅ Skipped to queue position $queueIndex in ${elapsed}ms")
+                } else {
+                    Log.w("QUEUE", "⚠️ Failed to skip to queue position $queueIndex")
+                }
+            } catch (e: Exception) {
+                Log.e("QUEUE", "❌ Error handling queue shift", e)
             }
         }
     }

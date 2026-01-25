@@ -10,9 +10,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mediadash.android.di.SpotifyDataStore
 import com.spotsdk.SpotSDK
 import com.spotsdk.SpotifyResult
 import com.spotsdk.api.SpotifyApiClient
@@ -33,8 +33,6 @@ import kotlinx.coroutines.launch
 import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import javax.inject.Inject
-
-private val Context.spotifyDataStore: DataStore<Preferences> by preferencesDataStore(name = "spotify_auth")
 
 /**
  * UI state for Spotify authentication.
@@ -127,7 +125,8 @@ sealed class SpotifyAuthEvent {
  */
 @HiltViewModel
 class SpotifyAuthViewModel @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    @SpotifyDataStore private val dataStore: DataStore<Preferences>
 ) : ViewModel() {
 
     companion object {
@@ -145,8 +144,6 @@ class SpotifyAuthViewModel @Inject constructor(
         // Spotify OAuth configuration
         private const val REDIRECT_URI = "janus://spotify-callback"
     }
-
-    private val dataStore = context.spotifyDataStore
 
     private val _uiState = MutableStateFlow(SpotifyAuthUiState())
     val uiState: StateFlow<SpotifyAuthUiState> = _uiState

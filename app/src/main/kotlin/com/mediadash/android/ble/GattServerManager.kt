@@ -23,12 +23,14 @@ import com.mediadash.android.domain.model.AlbumArtChunk
 import com.mediadash.android.domain.model.AlbumArtRequest
 import com.mediadash.android.domain.model.CompactLyricsResponse
 import com.mediadash.android.domain.model.ConnectionStatus
+import com.mediadash.android.domain.model.ConnectionStatusResponse
 import com.mediadash.android.domain.model.LyricsRequest
 import com.mediadash.android.domain.model.MediaState
 import com.mediadash.android.domain.model.PlaybackCommand
 import com.mediadash.android.domain.model.PodcastListResponse
 import com.mediadash.android.domain.model.RecentEpisodesResponse
 import com.mediadash.android.domain.model.PodcastEpisodesResponse
+import com.mediadash.android.domain.model.QueueResponse
 import com.mediadash.android.domain.model.toCompact
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -909,6 +911,114 @@ class GattServerManager @Inject constructor(
         }
 
         return output.toByteArray()
+    }
+
+    /**
+     * Notifies all connected devices with connection status for external services.
+     * Uses JSON format with header type=5.
+     * Response format: {"services":{"spotify":"connected"},"timestamp":123456}
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifyConnectionStatus(response: ConnectionStatusResponse) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("CONNECTIONS", "═══════════════════════════════════════════════")
+        Log.i("CONNECTIONS", "📤 SENDING CONNECTION STATUS")
+        Log.i("CONNECTIONS", "   Services: ${response.services.size}")
+        response.services.forEach { (service, status) ->
+            val icon = when {
+                status == "connected" -> "✅"
+                status == "disconnected" -> "❌"
+                status.startsWith("error:") -> "⚠️"
+                else -> "❓"
+            }
+            Log.i("CONNECTIONS", "   $icon $service: $status")
+        }
+
+        // Serialize to JSON
+        val jsonData = json.encodeToString(response).toByteArray(Charsets.UTF_8)
+        Log.i("CONNECTIONS", "   JSON size: ${jsonData.size} bytes")
+
+        // Split into 500-byte chunks if needed
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+
+        Log.i("CONNECTIONS", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+
+                // Header: [type=5][chunkIndex][totalChunks][data...]
+                // type=5 indicates connection status response
+                val header = byteArrayOf(5, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                if (!sent) {
+                    Log.w(TAG, "Failed to notify connection status chunk $index to ${device.address}")
+                    Log.w("CONNECTIONS", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
+                    break
+                }
+            }
+            Log.i("CONNECTIONS", "   ✅ Sent to ${device.address}")
+        }
+        Log.i("CONNECTIONS", "═══════════════════════════════════════════════")
+    }
+
+    /**
+     * Notifies all connected devices with playback queue.
+     * Uses JSON format with header type=6.
+     * Response format: {"s":"spotify","c":{...},"q":[...],"t":123456}
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifyQueue(response: QueueResponse) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("QUEUE", "═══════════════════════════════════════════════")
+        Log.i("QUEUE", "📤 SENDING QUEUE")
+        Log.i("QUEUE", "   Service: ${response.service}")
+        Log.i("QUEUE", "   Currently playing: ${response.currentlyPlaying?.title ?: "(none)"}")
+        Log.i("QUEUE", "   Queue tracks: ${response.tracks.size}")
+
+        // Convert to compact format for BLE transfer
+        val compactResponse = response.toCompact()
+
+        // Serialize to JSON
+        val jsonData = json.encodeToString(compactResponse).toByteArray(Charsets.UTF_8)
+        Log.i("QUEUE", "   JSON size: ${jsonData.size} bytes")
+
+        // Split into 500-byte chunks if needed
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+
+        Log.i("QUEUE", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+
+                // Header: [type=6][chunkIndex][totalChunks][data...]
+                // type=6 indicates queue response
+                val header = byteArrayOf(6, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                if (!sent) {
+                    Log.w(TAG, "Failed to notify queue chunk $index to ${device.address}")
+                    Log.w("QUEUE", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
+                    break
+                }
+            }
+            Log.i("QUEUE", "   ✅ Sent to ${device.address}")
+        }
+        Log.i("QUEUE", "═══════════════════════════════════════════════")
     }
 
     /**
