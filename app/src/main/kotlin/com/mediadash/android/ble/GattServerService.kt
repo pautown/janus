@@ -14,7 +14,10 @@ import androidx.core.app.NotificationCompat
 import com.mediadash.android.R
 import com.mediadash.android.data.media.LyricsManager
 import com.mediadash.android.data.repository.MediaRepository
+import com.mediadash.android.data.spotify.LibraryAlbumArtManager
 import com.mediadash.android.data.spotify.SpotifyConnectionChecker
+import com.mediadash.android.data.spotify.SpotifyLibraryManager
+import com.mediadash.android.data.spotify.SpotifyPlaybackController
 import com.mediadash.android.data.spotify.SpotifyQueueManager
 import com.mediadash.android.domain.model.ConnectionStatusResponse
 import com.mediadash.android.domain.model.LyricsRequest
@@ -73,6 +76,15 @@ class GattServerService : Service() {
 
     @Inject
     lateinit var spotifyQueueManager: SpotifyQueueManager
+
+    @Inject
+    lateinit var spotifyPlaybackController: SpotifyPlaybackController
+
+    @Inject
+    lateinit var spotifyLibraryManager: SpotifyLibraryManager
+
+    @Inject
+    lateinit var libraryAlbumArtManager: LibraryAlbumArtManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var mediaStateJob: Job? = null
@@ -252,6 +264,90 @@ class GattServerService : Service() {
                         Log.i("QUEUE", "   Index: $queueIndex")
                         Log.i("QUEUE", "   Source: golang_ble_client via BLE")
                         handleQueueShift(queueIndex)
+                    }
+                    // Spotify playback controls (shuffle, repeat, like/unlike)
+                    PlaybackCommand.ACTION_SHUFFLE_ON -> {
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "🔀 SHUFFLE: Enable")
+                        handleSpotifyShuffle(true)
+                    }
+                    PlaybackCommand.ACTION_SHUFFLE_OFF -> {
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "🔀 SHUFFLE: Disable")
+                        handleSpotifyShuffle(false)
+                    }
+                    PlaybackCommand.ACTION_REPEAT_OFF -> {
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "🔁 REPEAT: Off")
+                        handleSpotifyRepeat("off")
+                    }
+                    PlaybackCommand.ACTION_REPEAT_TRACK -> {
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "🔁 REPEAT: Track")
+                        handleSpotifyRepeat("track")
+                    }
+                    PlaybackCommand.ACTION_REPEAT_CONTEXT -> {
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "🔁 REPEAT: Context")
+                        handleSpotifyRepeat("context")
+                    }
+                    PlaybackCommand.ACTION_LIKE_TRACK -> {
+                        val trackId = command.trackId
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "❤️ LIKE: Track")
+                        Log.i("SPOTIFY", "   Track ID: ${trackId ?: "(current)"}")
+                        handleSpotifyLikeTrack(trackId)
+                    }
+                    PlaybackCommand.ACTION_UNLIKE_TRACK -> {
+                        val trackId = command.trackId
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "💔 UNLIKE: Track")
+                        Log.i("SPOTIFY", "   Track ID: ${trackId ?: "(current)"}")
+                        handleSpotifyUnlikeTrack(trackId)
+                    }
+                    PlaybackCommand.ACTION_REQUEST_SPOTIFY_STATE -> {
+                        Log.i("SPOTIFY", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY", "📊 REQUEST: Spotify playback state")
+                        handleSpotifyStateRequest()
+                    }
+                    // Spotify library browsing
+                    PlaybackCommand.ACTION_REQUEST_LIBRARY_OVERVIEW -> {
+                        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY_LIB", "📊 REQUEST: Library overview")
+                        handleLibraryOverviewRequest()
+                    }
+                    PlaybackCommand.ACTION_REQUEST_LIBRARY_RECENT -> {
+                        val limit = if (command.limit > 0) command.limit else 20
+                        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY_LIB", "🕐 REQUEST: Recent tracks (limit=$limit)")
+                        handleLibraryRecentRequest(limit)
+                    }
+                    PlaybackCommand.ACTION_REQUEST_LIBRARY_LIKED -> {
+                        val offset = command.offset
+                        val limit = if (command.limit > 0) command.limit else 20
+                        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY_LIB", "❤️ REQUEST: Liked tracks (offset=$offset, limit=$limit)")
+                        handleLibraryLikedRequest(offset, limit)
+                    }
+                    PlaybackCommand.ACTION_REQUEST_LIBRARY_ALBUMS -> {
+                        val offset = command.offset
+                        val limit = if (command.limit > 0) command.limit else 20
+                        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY_LIB", "💿 REQUEST: Saved albums (offset=$offset, limit=$limit)")
+                        handleLibraryAlbumsRequest(offset, limit)
+                    }
+                    PlaybackCommand.ACTION_REQUEST_LIBRARY_PLAYLISTS -> {
+                        val offset = command.offset
+                        val limit = if (command.limit > 0) command.limit else 20
+                        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY_LIB", "📋 REQUEST: Playlists (offset=$offset, limit=$limit)")
+                        handleLibraryPlaylistsRequest(offset, limit)
+                    }
+                    PlaybackCommand.ACTION_PLAY_SPOTIFY_URI -> {
+                        val uri = command.uri ?: ""
+                        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY_LIB", "▶️ PLAY: URI $uri")
+                        handlePlaySpotifyUri(uri)
                     }
                     PlaybackCommand.ACTION_PLAY_PODCAST_EPISODE -> {
                         Log.i("PODCAST", "═══════════════════════════════════════════════════════")
@@ -651,6 +747,372 @@ class GattServerService : Service() {
         }
     }
 
+    // ============================================================================
+    // Spotify Playback Controls (shuffle, repeat, like/unlike)
+    // ============================================================================
+
+    private fun handleSpotifyShuffle(enabled: Boolean) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyPlaybackController.isConnected()) {
+                    Log.w("SPOTIFY", "⚠️ Spotify not connected, cannot set shuffle")
+                    return@launch
+                }
+
+                val success = spotifyPlaybackController.setShuffle(enabled)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (success) {
+                    Log.i("SPOTIFY", "✅ Shuffle set to $enabled in ${elapsed}ms")
+                    // Send updated state via BLE
+                    sendSpotifyPlaybackState()
+                } else {
+                    Log.w("SPOTIFY", "⚠️ Failed to set shuffle")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY", "❌ Error setting shuffle", e)
+            }
+        }
+    }
+
+    private fun handleSpotifyRepeat(mode: String) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyPlaybackController.isConnected()) {
+                    Log.w("SPOTIFY", "⚠️ Spotify not connected, cannot set repeat")
+                    return@launch
+                }
+
+                val success = spotifyPlaybackController.setRepeat(mode)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (success) {
+                    Log.i("SPOTIFY", "✅ Repeat set to $mode in ${elapsed}ms")
+                    // Send updated state via BLE
+                    sendSpotifyPlaybackState()
+                } else {
+                    Log.w("SPOTIFY", "⚠️ Failed to set repeat")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY", "❌ Error setting repeat", e)
+            }
+        }
+    }
+
+    private fun handleSpotifyLikeTrack(trackId: String?) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyPlaybackController.isConnected()) {
+                    Log.w("SPOTIFY", "⚠️ Spotify not connected, cannot like track")
+                    return@launch
+                }
+
+                val success = spotifyPlaybackController.saveTrack(trackId)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (success) {
+                    Log.i("SPOTIFY", "✅ Track liked in ${elapsed}ms")
+                    // Send updated state via BLE
+                    sendSpotifyPlaybackState()
+                } else {
+                    Log.w("SPOTIFY", "⚠️ Failed to like track")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY", "❌ Error liking track", e)
+            }
+        }
+    }
+
+    private fun handleSpotifyUnlikeTrack(trackId: String?) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyPlaybackController.isConnected()) {
+                    Log.w("SPOTIFY", "⚠️ Spotify not connected, cannot unlike track")
+                    return@launch
+                }
+
+                val success = spotifyPlaybackController.removeTrack(trackId)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (success) {
+                    Log.i("SPOTIFY", "✅ Track unliked in ${elapsed}ms")
+                    // Send updated state via BLE
+                    sendSpotifyPlaybackState()
+                } else {
+                    Log.w("SPOTIFY", "⚠️ Failed to unlike track")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY", "❌ Error unliking track", e)
+            }
+        }
+    }
+
+    private fun handleSpotifyStateRequest() {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyPlaybackController.isConnected()) {
+                    Log.w("SPOTIFY", "⚠️ Spotify not connected")
+                    return@launch
+                }
+
+                val state = spotifyPlaybackController.fetchPlaybackState()
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (state != null) {
+                    Log.i("SPOTIFY", "📤 RESPONSE: Spotify playback state")
+                    Log.i("SPOTIFY", "   Shuffle: ${state.shuffleEnabled}")
+                    Log.i("SPOTIFY", "   Repeat: ${state.repeatMode}")
+                    Log.i("SPOTIFY", "   Track ID: ${state.currentTrackId ?: "(none)"}")
+                    Log.i("SPOTIFY", "   Processing time: ${elapsed}ms")
+
+                    // Check if current track is liked
+                    val isLiked = if (!state.currentTrackId.isNullOrBlank()) {
+                        spotifyPlaybackController.isTrackSaved(state.currentTrackId)
+                    } else {
+                        false
+                    }
+
+                    val stateWithLiked = state.copy(isTrackLiked = isLiked)
+                    gattServerManager.notifySpotifyPlaybackState(stateWithLiked)
+                    Log.i("SPOTIFY", "✅ Spotify playback state transmitted via BLE")
+                } else {
+                    Log.w("SPOTIFY", "⚠️ Failed to fetch playback state (no active session)")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY", "❌ Error fetching playback state", e)
+            }
+        }
+    }
+
+    /**
+     * Helper to send current Spotify playback state via BLE after a change.
+     */
+    private suspend fun sendSpotifyPlaybackState() {
+        try {
+            val state = spotifyPlaybackController.fetchPlaybackState()
+            if (state != null) {
+                // Check if current track is liked
+                val isLiked = if (!state.currentTrackId.isNullOrBlank()) {
+                    spotifyPlaybackController.isTrackSaved(state.currentTrackId)
+                } else {
+                    false
+                }
+
+                val stateWithLiked = state.copy(isTrackLiked = isLiked)
+                gattServerManager.notifySpotifyPlaybackState(stateWithLiked)
+                Log.d("SPOTIFY", "📤 Sent updated playback state via BLE")
+            }
+        } catch (e: Exception) {
+            Log.e("SPOTIFY", "❌ Error sending playback state", e)
+        }
+    }
+
+    // ============================================================================
+    // Spotify Library Browsing Handlers
+    // ============================================================================
+
+    private fun handleLibraryOverviewRequest() {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyLibraryManager.isConnected()) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Spotify not connected")
+                    return@launch
+                }
+
+                val overview = spotifyLibraryManager.fetchOverview()
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (overview != null) {
+                    Log.i("SPOTIFY_LIB", "📤 RESPONSE: Library overview")
+                    Log.i("SPOTIFY_LIB", "   User: ${overview.userName}")
+                    Log.i("SPOTIFY_LIB", "   Liked: ${overview.likedCount}, Albums: ${overview.albumsCount}")
+                    Log.i("SPOTIFY_LIB", "   Playlists: ${overview.playlistsCount}, Artists: ${overview.artistsCount}")
+                    Log.i("SPOTIFY_LIB", "   Processing time: ${elapsed}ms")
+
+                    gattServerManager.notifySpotifyLibraryOverview(overview)
+                    Log.i("SPOTIFY_LIB", "✅ Library overview transmitted via BLE")
+                } else {
+                    Log.w("SPOTIFY_LIB", "⚠️ Failed to fetch library overview")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY_LIB", "❌ Error fetching library overview", e)
+            }
+        }
+    }
+
+    private fun handleLibraryRecentRequest(limit: Int) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyLibraryManager.isConnected()) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Spotify not connected")
+                    return@launch
+                }
+
+                val response = spotifyLibraryManager.fetchRecentTracks(limit)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (response != null) {
+                    Log.i("SPOTIFY_LIB", "📤 RESPONSE: Recent tracks")
+                    Log.i("SPOTIFY_LIB", "   Tracks: ${response.items.size}")
+                    Log.i("SPOTIFY_LIB", "   Processing time: ${elapsed}ms")
+
+                    gattServerManager.notifySpotifyTrackList(response)
+                    Log.i("SPOTIFY_LIB", "✅ Recent tracks transmitted via BLE")
+                } else {
+                    Log.w("SPOTIFY_LIB", "⚠️ Failed to fetch recent tracks")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY_LIB", "❌ Error fetching recent tracks", e)
+            }
+        }
+    }
+
+    private fun handleLibraryLikedRequest(offset: Int, limit: Int) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyLibraryManager.isConnected()) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Spotify not connected")
+                    return@launch
+                }
+
+                val response = spotifyLibraryManager.fetchLikedTracks(offset, limit)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (response != null) {
+                    Log.i("SPOTIFY_LIB", "📤 RESPONSE: Liked tracks")
+                    Log.i("SPOTIFY_LIB", "   Tracks: ${response.items.size} (total: ${response.total})")
+                    Log.i("SPOTIFY_LIB", "   Processing time: ${elapsed}ms")
+
+                    gattServerManager.notifySpotifyTrackList(response)
+                    Log.i("SPOTIFY_LIB", "✅ Liked tracks transmitted via BLE")
+                } else {
+                    Log.w("SPOTIFY_LIB", "⚠️ Failed to fetch liked tracks")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY_LIB", "❌ Error fetching liked tracks", e)
+            }
+        }
+    }
+
+    private fun handleLibraryAlbumsRequest(offset: Int, limit: Int) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyLibraryManager.isConnected()) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Spotify not connected")
+                    return@launch
+                }
+
+                val response = spotifyLibraryManager.fetchSavedAlbums(offset, limit)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (response != null) {
+                    Log.i("SPOTIFY_LIB", "📤 RESPONSE: Saved albums")
+                    Log.i("SPOTIFY_LIB", "   Albums: ${response.items.size} (total: ${response.total})")
+                    Log.i("SPOTIFY_LIB", "   Processing time: ${elapsed}ms")
+
+                    // Register albums with the library art manager for on-demand fetching
+                    // Each album has an artHash that the CarThing can use to request art
+                    libraryAlbumArtManager.registerAlbums(response.items)
+                    Log.i("SPOTIFY_LIB", "   📷 Registered ${response.items.size} albums for art requests")
+
+                    gattServerManager.notifySpotifyAlbumList(response)
+                    Log.i("SPOTIFY_LIB", "✅ Saved albums transmitted via BLE")
+
+                    // Pre-fetch album art for the first few visible albums in background
+                    serviceScope.launch(Dispatchers.IO) {
+                        libraryAlbumArtManager.prefetchAlbumArt(response.items.take(5))
+                    }
+                } else {
+                    Log.w("SPOTIFY_LIB", "⚠️ Failed to fetch saved albums")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY_LIB", "❌ Error fetching saved albums", e)
+            }
+        }
+    }
+
+    private fun handleLibraryPlaylistsRequest(offset: Int, limit: Int) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyLibraryManager.isConnected()) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Spotify not connected")
+                    return@launch
+                }
+
+                val response = spotifyLibraryManager.fetchPlaylists(offset, limit)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (response != null) {
+                    Log.i("SPOTIFY_LIB", "📤 RESPONSE: Playlists")
+                    Log.i("SPOTIFY_LIB", "   Playlists: ${response.items.size} (total: ${response.total})")
+                    Log.i("SPOTIFY_LIB", "   Processing time: ${elapsed}ms")
+
+                    gattServerManager.notifySpotifyPlaylistList(response)
+                    Log.i("SPOTIFY_LIB", "✅ Playlists transmitted via BLE")
+                } else {
+                    Log.w("SPOTIFY_LIB", "⚠️ Failed to fetch playlists")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY_LIB", "❌ Error fetching playlists", e)
+            }
+        }
+    }
+
+    private fun handlePlaySpotifyUri(uri: String) {
+        serviceScope.launch {
+            try {
+                Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                Log.i("SPOTIFY_LIB", "▶️ PLAY URI REQUEST: $uri")
+
+                if (uri.isBlank()) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Empty URI - ignoring request")
+                    return@launch
+                }
+
+                Log.d("SPOTIFY_LIB", "Checking Spotify connection (will auto-refresh if needed)...")
+                val isConnected = spotifyLibraryManager.isConnected()
+
+                if (!isConnected) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Spotify not connected - no valid token or refresh failed")
+                    Log.w("SPOTIFY_LIB", "   Please open the Spotify page in the app to authenticate")
+                    return@launch
+                }
+
+                Log.d("SPOTIFY_LIB", "✓ Spotify connected, sending play command...")
+                val success = spotifyLibraryManager.playUri(uri)
+
+                if (success) {
+                    Log.i("SPOTIFY_LIB", "✅ SUCCESS: Now playing URI: $uri")
+                } else {
+                    Log.w("SPOTIFY_LIB", "⚠️ Play command failed (API returned error)")
+                }
+                Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+            } catch (e: Exception) {
+                Log.e("SPOTIFY_LIB", "❌ Exception playing URI: ${e.message}", e)
+            }
+        }
+    }
+
     private fun observeAlbumArtRequests() {
         albumArtRequestJob = serviceScope.launch {
             gattServerManager.albumArtRequested.collect { request ->
@@ -698,12 +1160,28 @@ class GattServerService : Service() {
                         }
                     }
 
-                    // Case 3: Request doesn't match expected hash - it's for an old track
+                    // Case 3: Request doesn't match expected hash - check library art cache
                     else -> {
-                        Log.w("ALBUMART", "   ⚠️ Hash mismatch - request is for old track")
-                        Log.w("ALBUMART", "      Requested: ${request.hash}")
-                        Log.w("ALBUMART", "      Expected:  $expectedHash")
-                        Log.w("ALBUMART", "      Chunk:     $currentChunkHash")
+                        Log.i("ALBUMART", "   📚 Hash doesn't match current track, checking library art cache...")
+                        Log.d("ALBUMART", "      Requested: ${request.hash}")
+                        Log.d("ALBUMART", "      Expected:  $expectedHash")
+
+                        // Try to get from library album art cache (for saved albums browsing)
+                        val libraryChunks = libraryAlbumArtManager.getCachedChunks(request.hash)
+                        if (libraryChunks != null) {
+                            Log.i("ALBUMART", "   ✅ Found in library cache! (${libraryChunks.size} chunks)")
+                            gattServerManager.transmitAlbumArt(libraryChunks)
+                        } else {
+                            // Try to fetch on-demand from registered album URLs
+                            Log.i("ALBUMART", "   🔄 Not in cache, attempting on-demand fetch...")
+                            val fetchedChunks = libraryAlbumArtManager.fetchOnDemand(request.hash)
+                            if (fetchedChunks != null) {
+                                Log.i("ALBUMART", "   ✅ Fetched on-demand! (${fetchedChunks.size} chunks)")
+                                gattServerManager.transmitAlbumArt(fetchedChunks)
+                            } else {
+                                Log.w("ALBUMART", "   ⚠️ No art available for hash: ${request.hash}")
+                            }
+                        }
                     }
                 }
             }

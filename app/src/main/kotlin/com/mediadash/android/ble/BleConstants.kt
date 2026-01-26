@@ -33,6 +33,7 @@ object BleConstants {
     const val MAX_BLE_NOTIFICATION = 512          // Max BLE notification size (bytes)
     const val NOTIFICATION_INTERVAL_MS = 10L      // Minimum interval between notifications (ms)
     const val ALBUM_ART_MAX_SIZE = 250            // Max album art dimension (pixels)
+    const val LIBRARY_ART_MAX_SIZE = 150          // Max library album art dimension (smaller for grid view)
     const val ALBUM_ART_QUALITY = 75              // WebP compression quality (0-100)
     const val MAX_ALBUM_ART_BYTES = 2 * 1024 * 1024  // 2MB max album art size
 
