@@ -35,6 +35,295 @@ Janus is part of a three-component system for bringing media control to the Spot
 - **Playback Commands**: Bidirectional control (play, pause, seek, volume, skip, toggle)
 - **Time Sync**: Syncs phone time to CarThing on connection
 - **Foreground Service**: Maintains BLE connection in background
+- **Spotify Integration**: OAuth 2.0 authentication and library browser (see [Spotify Integration](#spotify-integration) section)
+
+## Spotify Integration
+
+Janus includes a full Spotify Web API integration for browsing your library, controlling playback, and managing liked tracks directly from the app.
+
+### Overview
+
+The Spotify integration provides:
+- **OAuth 2.0 PKCE Authentication**: Secure login without storing secrets
+- **Library Browser**: Browse your recently played, liked songs, saved albums, and playlists
+- **Playback Controls**: Toggle shuffle/repeat modes, view and skip through queue
+- **Like/Unlike**: Add or remove tracks from your library
+- **Direct Playback**: Start playing tracks, albums, or playlists from the browser
+
+### Setup
+
+#### 1. Create a Spotify Developer App
+
+1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+2. Click **Create app**
+3. Fill in:
+   - **App name**: Your choice (e.g., "Janus CarThing")
+   - **App description**: Your choice
+   - **Redirect URI**: `janus://spotify-callback` (required)
+4. Click **Create**
+5. Copy your **Client ID** (32-character string)
+
+#### 2. Add Test Users (Development Mode)
+
+While in development mode, only allowlisted users can authenticate:
+
+1. In your app dashboard, go to **Settings** → **User Management**
+2. Add Spotify email addresses for each user (up to 25 in dev mode)
+3. Users must accept the invitation
+
+#### 3. Configure in Janus
+
+1. Open Janus app on your Android device
+2. Swipe to the **Spotify** page (4th page in the pager)
+3. Tap the **Spotify Client ID** card
+4. Paste your Client ID
+5. Tap **Save**
+6. Tap **Log in with Spotify**
+
+### Authentication Flow
+
+Janus uses **OAuth 2.0 PKCE** (Proof Key for Code Exchange) for secure authentication without requiring a client secret:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Janus     │     │  Spotify    │     │  Spotify    │
+│   App       │     │  Auth       │     │  API        │
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       │ 1. Generate PKCE  │                   │
+       │    code_verifier  │                   │
+       │    code_challenge │                   │
+       │                   │                   │
+       │ 2. Auth Request   │                   │
+       │   + code_challenge│                   │
+       ├──────────────────>│                   │
+       │                   │                   │
+       │ 3. User Login     │                   │
+       │   (Browser)       │                   │
+       │<─ ─ ─ ─ ─ ─ ─ ─ ─>│                   │
+       │                   │                   │
+       │ 4. Auth Code      │                   │
+       │   (redirect)      │                   │
+       │<──────────────────┤                   │
+       │                   │                   │
+       │ 5. Token Exchange │                   │
+       │   + code_verifier │                   │
+       ├──────────────────>│                   │
+       │                   │                   │
+       │ 6. Access Token   │                   │
+       │   + Refresh Token │                   │
+       │<──────────────────┤                   │
+       │                   │                   │
+       │ 7. API Requests   │                   │
+       │   + Access Token  │                   │
+       ├───────────────────┼──────────────────>│
+       │                   │                   │
+```
+
+**Tokens are stored securely** in Android DataStore and automatically refreshed when expired.
+
+### Library Browser
+
+The Spotify page features a tabbed library browser:
+
+#### Tab Navigation
+
+| Tab | Description | Content |
+|-----|-------------|---------|
+| **Overview** | Summary view | Profile, library stats, activity, playback controls, queue |
+| **Recent** | Recently played | Last 50 played tracks with like buttons |
+| **Liked** | Saved tracks | Your liked songs with remove option |
+| **Albums** | Saved albums | Your saved albums |
+| **Playlists** | Your playlists | All playlists (owned and followed) |
+
+#### How Each Tab Works
+
+**Overview Tab**
+- Shows user profile (avatar, name, subscription tier, country)
+- Library statistics (liked songs count, albums, playlists, followed artists)
+- Current activity (now playing, recently played)
+- Playback controls (shuffle, repeat mode toggles)
+- Queue viewer with skip-to-track functionality
+
+**Recent Tab**
+- Loads automatically when selected (50 most recent tracks)
+- Each track shows: album art, title, artist, duration
+- Heart icon shows saved status (filled green = saved, outline = not saved)
+- Tap heart to like/unlike
+- Tap track to start playback
+- Pull-to-refresh available
+
+**Liked Tab**
+- Paginated list of saved tracks (20 per page)
+- "Load More" button for pagination
+- Tap heart to remove from library
+- Tap track to start playback
+- Optimistic UI updates (track removed immediately, API call in background)
+
+**Albums Tab**
+- Paginated list of saved albums (20 per page)
+- Shows: album art, name, artist, track count
+- Tap to start playing the album
+- "Load More" for pagination
+
+**Playlists Tab**
+- Paginated list of playlists (20 per page)
+- Shows: playlist image, name, owner, track count, public/private icon
+- Tap to start playing the playlist
+- "Load More" for pagination
+
+### Playback Controls
+
+#### Shuffle Modes
+| State | Icon | Description |
+|-------|------|-------------|
+| OFF | Gray shuffle icon | Normal playback order |
+| ON | Green shuffle icon | Standard shuffle |
+| SMART | Purple shuffle icon | Spotify's AI-enhanced shuffle (read-only) |
+
+Tap the shuffle button to toggle: OFF → ON → OFF
+
+#### Repeat Modes
+| State | Icon | Description |
+|-------|------|-------------|
+| OFF | Gray repeat icon | No repeat |
+| CONTEXT | Green repeat icon | Repeat playlist/album |
+| TRACK | Green repeat-one icon | Repeat current track |
+
+Tap the repeat button to cycle: OFF → CONTEXT → TRACK → OFF
+
+#### Queue Management
+
+- **View Queue**: Shows up to 10 upcoming tracks
+- **Skip to Track**: Tap any queue item to skip to it
+- **Refresh**: Pull or tap refresh to update queue state
+
+### Like/Unlike Tracks
+
+#### Liking a Track
+1. Find the track in **Recent** or **Queue**
+2. Tap the outline heart icon
+3. Heart fills green, track is saved to library
+4. Liked songs count increases
+
+#### Unliking a Track
+Option 1 (from Recent/Queue):
+1. Tap the filled green heart icon
+2. Heart returns to outline, track removed from library
+
+Option 2 (from Liked tab):
+1. Navigate to **Liked** tab
+2. Tap the heart icon on any track
+3. Track is removed from list immediately
+
+### Starting Playback
+
+**Playing a Track**
+- Tap any track row in Recent, Liked, or Queue
+- Playback starts immediately on your active Spotify device
+- If no device is active, you'll see "No active device found. Open Spotify on a device first."
+
+**Playing an Album**
+- Navigate to **Albums** tab
+- Tap any album row
+- Album starts playing from the first track
+
+**Playing a Playlist**
+- Navigate to **Playlists** tab
+- Tap any playlist row
+- Playlist starts playing from the first track
+
+### API Scopes
+
+The Spotify integration requests these OAuth scopes:
+
+| Scope | Purpose |
+|-------|---------|
+| `user-read-private` | Read user profile data |
+| `user-read-email` | Read user email |
+| `user-read-recently-played` | Access recently played tracks |
+| `user-read-playback-state` | Read playback state (shuffle, repeat, queue) |
+| `user-modify-playback-state` | Control playback (play, pause, shuffle, repeat) |
+| `user-library-read` | Read saved tracks, albums |
+| `user-library-modify` | Add/remove saved tracks |
+| `user-follow-read` | Read followed artists |
+| `playlist-read-private` | Read private playlists |
+| `playlist-read-collaborative` | Read collaborative playlists |
+
+### Limitations
+
+- **Development Mode**: Max 25 authenticated users until Spotify approves extended quota
+- **Active Device Required**: Playback commands require an active Spotify app session somewhere
+- **Rate Limits**: Spotify API has rate limits; the app handles these with automatic retry
+- **Premium Features**: Some playback features may require Spotify Premium
+
+### Troubleshooting
+
+**"Client ID appears invalid"**
+- Ensure the Client ID is exactly 32 characters
+- Copy directly from Spotify Dashboard without extra spaces
+
+**"Authentication error" after login**
+- Verify redirect URI is exactly `janus://spotify-callback` in Spotify Dashboard
+- Check that your Spotify account is added to the app's allowlist
+
+**"No active device found"**
+- Open Spotify on any device (phone, computer, smart speaker)
+- Start playing something to make it the active device
+- Then retry the playback command from Janus
+
+**Token refresh fails**
+- Tap **Log out** and log back in
+- This gets a fresh token pair
+
+**Library stats show "-"**
+- Tap the refresh icon on the Library card
+- Check your internet connection
+
+### Architecture
+
+The Spotify integration uses a clean architecture:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                 UI Layer (Compose)                       │
+│  SpotifyAuthPage, SpotifyTabRow, Section Composables    │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│              ViewModel Layer                             │
+│  SpotifyAuthViewModel (state, events, business logic)   │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│              SDK Layer (spotSDK)                         │
+│  SpotifyApiService (Retrofit), SpotifyAuthManager       │
+│  Data models, Token management                           │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│              Spotify Web API                             │
+│  accounts.spotify.com (auth), api.spotify.com (data)    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key Components:**
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `SpotifyAuthPage` | `ui/spotify/` | Main UI composable with tabs |
+| `SpotifyAuthViewModel` | `ui/spotify/` | State management and API calls |
+| `SpotifyApiService` | `spotSDK` | Retrofit interface for Spotify API |
+| `SpotifyAuthManager` | `spotSDK` | OAuth 2.0 PKCE flow management |
+| `SpotifyApiClient` | `spotSDK` | Configured Retrofit client with auth |
+
+**Data Flow:**
+
+1. User taps tab → `SpotifyAuthEvent.SelectTab` dispatched
+2. ViewModel calls `selectTab()` → triggers `loadXxxTracks()` if needed
+3. API call via `SpotifyApiClient.apiService.getXxx()`
+4. Response mapped to UI model (e.g., `RecentTrackItem`)
+5. State updated → UI recomposes automatically
 
 ## Requirements
 
@@ -603,6 +892,10 @@ Lazy loading approach (send list + on-demand episodes):
 ### Database
 - Room 2.6.1
 
+### Spotify Integration
+- AppAuth 0.11.1 (OAuth 2.0 PKCE)
+- spotSDK (local module) - Spotify Web API client
+
 ### Other
 - RSS Parser 6.0.7
 - Coil (image loading) 2.5.0
@@ -759,9 +1052,30 @@ app/src/main/kotlin/com/mediadash/android/
     ├── podcast/
     │   ├── PodcastPage.kt
     │   └── PodcastViewModel.kt
-    └── player/
-        ├── PodcastPlayerPage.kt
-        └── PodcastPlayerViewModel.kt
+    ├── player/
+    │   ├── PodcastPlayerPage.kt
+    │   └── PodcastPlayerViewModel.kt
+    └── spotify/
+        ├── SpotifyAuthPage.kt         # Spotify integration UI
+        └── SpotifyAuthViewModel.kt    # Spotify state & API calls
+
+# spotSDK module (supporting_projects/spotSDK/)
+spotsdk/src/main/java/com/spotsdk/
+├── SpotSDK.kt                         # Main SDK entry point
+├── api/
+│   ├── SpotifyApiService.kt           # Retrofit API interface
+│   └── SpotifyApiClient.kt            # Configured Retrofit client
+├── auth/
+│   ├── SpotifyAuthManager.kt          # OAuth 2.0 PKCE flow
+│   └── TokenResult.kt                 # Token response model
+└── models/
+    ├── Album.kt                       # Album, SimplifiedAlbum
+    ├── Artist.kt                      # Artist, SimplifiedArtist
+    ├── Playlist.kt                    # Playlist, SimplifiedPlaylist
+    ├── Track.kt                       # Track, SavedTrack, SavedAlbum
+    ├── Responses.kt                   # API response wrappers
+    ├── PlayHistory.kt                 # Recently played models
+    └── SpotifyUser.kt                 # User profile model
 ```
 
 ### Adding New Playback Commands

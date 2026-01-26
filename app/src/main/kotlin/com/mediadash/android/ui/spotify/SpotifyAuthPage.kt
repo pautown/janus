@@ -8,6 +8,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,15 +30,24 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistPlay
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
@@ -155,53 +167,109 @@ fun SpotifyAuthPage(
                     onLogout = { viewModel.onEvent(SpotifyAuthEvent.Logout) }
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Library stats
-                LibraryStatsCard(
-                    isLoading = uiState.isLoadingStats,
-                    savedTracks = uiState.savedTracksCount,
-                    savedAlbums = uiState.savedAlbumsCount,
-                    playlists = uiState.playlistsCount,
-                    followedArtists = uiState.followedArtistsCount,
-                    onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshLibraryStats) }
+                // Tab row for library navigation
+                SpotifyTabRow(
+                    selectedTab = uiState.selectedTab,
+                    onTabSelected = { viewModel.onEvent(SpotifyAuthEvent.SelectTab(it)) }
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Activity card
-                ActivityCard(
-                    currentlyPlaying = uiState.currentlyPlaying,
-                    recentTrack = uiState.recentTrackName,
-                    recentArtist = uiState.recentTrackArtist
-                )
+                // Content based on selected tab
+                when (uiState.selectedTab) {
+                    SpotifyTab.OVERVIEW -> {
+                        // Original overview content
+                        LibraryStatsCard(
+                            isLoading = uiState.isLoadingStats,
+                            savedTracks = uiState.savedTracksCount,
+                            savedAlbums = uiState.savedAlbumsCount,
+                            playlists = uiState.playlistsCount,
+                            followedArtists = uiState.followedArtistsCount,
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshLibraryStats) }
+                        )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
-                // Playback controls card
-                PlaybackControlsCard(
-                    shuffleState = uiState.shuffleState,
-                    repeatState = uiState.repeatState,
-                    isToggling = uiState.isTogglingPlayback,
-                    onToggleShuffle = { viewModel.onEvent(SpotifyAuthEvent.ToggleShuffle) },
-                    onToggleRepeat = { viewModel.onEvent(SpotifyAuthEvent.ToggleRepeat) },
-                    onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshPlaybackState) }
-                )
+                        ActivityCard(
+                            currentlyPlaying = uiState.currentlyPlaying,
+                            recentTrack = uiState.recentTrackName,
+                            recentArtist = uiState.recentTrackArtist
+                        )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
-                // Queue card
-                QueueCard(
-                    queueTracks = uiState.queueTracks,
-                    isLoading = uiState.isLoadingQueue,
-                    onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshQueue) },
-                    onTrackClick = { position -> viewModel.onEvent(SpotifyAuthEvent.SkipToPosition(position)) }
-                )
+                        PlaybackControlsCard(
+                            shuffleState = uiState.shuffleState,
+                            repeatState = uiState.repeatState,
+                            isToggling = uiState.isTogglingPlayback,
+                            onToggleShuffle = { viewModel.onEvent(SpotifyAuthEvent.ToggleShuffle) },
+                            onToggleRepeat = { viewModel.onEvent(SpotifyAuthEvent.ToggleRepeat) },
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshPlaybackState) }
+                        )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
-                // Connection status
-                ConnectionStatusCard(isConnected = true)
+                        QueueCard(
+                            queueTracks = uiState.queueTracks,
+                            isLoading = uiState.isLoadingQueue,
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshQueue) },
+                            onTrackClick = { position -> viewModel.onEvent(SpotifyAuthEvent.SkipToPosition(position)) }
+                        )
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        ConnectionStatusCard(isConnected = true)
+                    }
+
+                    SpotifyTab.RECENT -> {
+                        RecentTracksSection(
+                            tracks = uiState.recentTracks,
+                            isLoading = uiState.isLoadingRecent,
+                            savedTrackIds = uiState.savedTrackIds,
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadRecentTracks) },
+                            onTrackClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayTrack(uri)) },
+                            onToggleSave = { trackId, isSaved ->
+                                viewModel.onEvent(SpotifyAuthEvent.ToggleSaveTrack(trackId, isSaved))
+                            }
+                        )
+                    }
+
+                    SpotifyTab.LIKED -> {
+                        SavedTracksSection(
+                            tracks = uiState.savedTracks,
+                            isLoading = uiState.isLoadingSaved,
+                            hasMore = uiState.hasMoreSaved,
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadSavedTracks) },
+                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreSavedTracks) },
+                            onTrackClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayTrack(uri)) },
+                            onRemoveTrack = { trackId -> viewModel.onEvent(SpotifyAuthEvent.RemoveSavedTrack(trackId)) }
+                        )
+                    }
+
+                    SpotifyTab.ALBUMS -> {
+                        SavedAlbumsSection(
+                            albums = uiState.savedAlbums,
+                            isLoading = uiState.isLoadingAlbums,
+                            hasMore = uiState.hasMoreAlbums,
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadSavedAlbums) },
+                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreSavedAlbums) },
+                            onAlbumClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
+                        )
+                    }
+
+                    SpotifyTab.PLAYLISTS -> {
+                        PlaylistsSection(
+                            playlists = uiState.playlists,
+                            isLoading = uiState.isLoadingPlaylists,
+                            hasMore = uiState.hasMorePlaylists,
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadPlaylists) },
+                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMorePlaylists) },
+                            onPlaylistClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
+                        )
+                    }
+                }
 
             } else if (uiState.isClientIdConfigured) {
                 // Client ID configured but not logged in
@@ -1478,5 +1546,820 @@ private fun InfoCard() {
                 lineHeight = 20.sp
             )
         }
+    }
+}
+
+// =============================================================================
+// Library Browser Components
+// =============================================================================
+
+@Composable
+private fun SpotifyTabRow(
+    selectedTab: SpotifyTab,
+    onTabSelected: (SpotifyTab) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        SpotifyTab.entries.forEach { tab ->
+            TabChip(
+                text = when (tab) {
+                    SpotifyTab.OVERVIEW -> "Overview"
+                    SpotifyTab.RECENT -> "Recent"
+                    SpotifyTab.LIKED -> "Liked"
+                    SpotifyTab.ALBUMS -> "Albums"
+                    SpotifyTab.PLAYLISTS -> "Playlists"
+                },
+                icon = when (tab) {
+                    SpotifyTab.OVERVIEW -> Icons.Default.Dashboard
+                    SpotifyTab.RECENT -> Icons.Default.History
+                    SpotifyTab.LIKED -> Icons.Default.Favorite
+                    SpotifyTab.ALBUMS -> Icons.Default.Album
+                    SpotifyTab.PLAYLISTS -> Icons.Default.PlaylistPlay
+                },
+                isSelected = tab == selectedTab,
+                onClick = { onTabSelected(tab) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun TabChip(
+    text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = if (isSelected) SpotifyGreen else SpotifyDarkGray,
+        contentColor = if (isSelected) Color.White else SpotifyLightGray
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentTracksSection(
+    tracks: List<RecentTrackItem>,
+    isLoading: Boolean,
+    savedTrackIds: Set<String>,
+    onRefresh: () -> Unit,
+    onTrackClick: (String) -> Unit,
+    onToggleSave: (String, Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SpotifyDarkGray),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Recently Played",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    if (tracks.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "(${tracks.size})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyLightGray
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = SpotifyGreen,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            tint = SpotifyLightGray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (tracks.isEmpty() && !isLoading) {
+                Text(
+                    text = "No recently played tracks",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SpotifyLightGray.copy(alpha = 0.6f)
+                )
+            } else {
+                tracks.forEach { track ->
+                    val isSaved = savedTrackIds.contains(track.id)
+                    TrackListItem(
+                        imageUrl = track.imageUrl,
+                        name = track.name,
+                        artist = track.artist,
+                        subtitle = track.albumName,
+                        duration = track.durationMs,
+                        isSaved = isSaved,
+                        onSaveToggle = { onToggleSave(track.id, isSaved) },
+                        onClick = { onTrackClick(track.uri) }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedTracksSection(
+    tracks: List<SavedTrackItem>,
+    isLoading: Boolean,
+    hasMore: Boolean,
+    onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
+    onTrackClick: (String) -> Unit,
+    onRemoveTrack: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SpotifyDarkGray),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Favorite,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Liked Songs",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    if (tracks.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "(${tracks.size}${if (hasMore) "+" else ""})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyLightGray
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    if (isLoading && tracks.isEmpty()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = SpotifyGreen,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            tint = SpotifyLightGray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (tracks.isEmpty() && !isLoading) {
+                Text(
+                    text = "No liked songs yet",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SpotifyLightGray.copy(alpha = 0.6f)
+                )
+            } else {
+                tracks.forEach { track ->
+                    TrackListItem(
+                        imageUrl = track.imageUrl,
+                        name = track.name,
+                        artist = track.artist,
+                        subtitle = track.albumName,
+                        duration = track.durationMs,
+                        isSaved = true,
+                        onSaveToggle = { onRemoveTrack(track.id) },
+                        onClick = { onTrackClick(track.uri) }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                if (hasMore) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = onLoadMore,
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SpotifyGreen.copy(alpha = 0.2f),
+                            contentColor = SpotifyGreen
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = SpotifyGreen,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Load More")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedAlbumsSection(
+    albums: List<SavedAlbumItem>,
+    isLoading: Boolean,
+    hasMore: Boolean,
+    onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
+    onAlbumClick: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SpotifyDarkGray),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Album,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Saved Albums",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    if (albums.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "(${albums.size}${if (hasMore) "+" else ""})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyLightGray
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    if (isLoading && albums.isEmpty()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = SpotifyGreen,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            tint = SpotifyLightGray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (albums.isEmpty() && !isLoading) {
+                Text(
+                    text = "No saved albums yet",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SpotifyLightGray.copy(alpha = 0.6f)
+                )
+            } else {
+                albums.forEach { album ->
+                    AlbumListItem(
+                        imageUrl = album.imageUrl,
+                        name = album.name,
+                        artist = album.artist,
+                        trackCount = album.trackCount,
+                        onClick = { onAlbumClick(album.uri) }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                if (hasMore) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = onLoadMore,
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SpotifyGreen.copy(alpha = 0.2f),
+                            contentColor = SpotifyGreen
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = SpotifyGreen,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Load More")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistsSection(
+    playlists: List<PlaylistItem>,
+    isLoading: Boolean,
+    hasMore: Boolean,
+    onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
+    onPlaylistClick: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SpotifyDarkGray),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.PlaylistPlay,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Playlists",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    if (playlists.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "(${playlists.size}${if (hasMore) "+" else ""})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyLightGray
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    if (isLoading && playlists.isEmpty()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = SpotifyGreen,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            tint = SpotifyLightGray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (playlists.isEmpty() && !isLoading) {
+                Text(
+                    text = "No playlists yet",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SpotifyLightGray.copy(alpha = 0.6f)
+                )
+            } else {
+                playlists.forEach { playlist ->
+                    PlaylistListItem(
+                        imageUrl = playlist.imageUrl,
+                        name = playlist.name,
+                        ownerName = playlist.ownerName,
+                        trackCount = playlist.trackCount,
+                        isPublic = playlist.isPublic,
+                        onClick = { onPlaylistClick(playlist.uri) }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                if (hasMore) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = onLoadMore,
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SpotifyGreen.copy(alpha = 0.2f),
+                            contentColor = SpotifyGreen
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = SpotifyGreen,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Load More")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackListItem(
+    imageUrl: String?,
+    name: String,
+    artist: String,
+    subtitle: String?,
+    duration: Long,
+    isSaved: Boolean,
+    onSaveToggle: () -> Unit,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Album art
+        if (imageUrl != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = "Album art",
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(SpotifyLightGray.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = SpotifyLightGray,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        // Track info
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = if (subtitle != null) "$artist • $subtitle" else artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = SpotifyLightGray,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        // Save/like button
+        IconButton(
+            onClick = onSaveToggle,
+            modifier = Modifier.size(36.dp)
+        ) {
+            Icon(
+                imageVector = if (isSaved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                contentDescription = if (isSaved) "Remove from library" else "Save to library",
+                tint = if (isSaved) SpotifyGreen else SpotifyLightGray,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        // Duration
+        Text(
+            text = formatDuration(duration),
+            style = MaterialTheme.typography.bodySmall,
+            color = SpotifyLightGray,
+            modifier = Modifier.width(40.dp),
+            textAlign = TextAlign.End
+        )
+
+        // Play indicator
+        Icon(
+            imageVector = Icons.Default.PlayArrow,
+            contentDescription = "Play",
+            tint = SpotifyLightGray.copy(alpha = 0.6f),
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+@Composable
+private fun AlbumListItem(
+    imageUrl: String?,
+    name: String,
+    artist: String,
+    trackCount: Int,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Album art
+        if (imageUrl != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = "Album art",
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(SpotifyLightGray.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Album,
+                    contentDescription = null,
+                    tint = SpotifyLightGray,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        // Album info
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = SpotifyLightGray,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "$trackCount tracks",
+                style = MaterialTheme.typography.labelSmall,
+                color = SpotifyLightGray.copy(alpha = 0.7f)
+            )
+        }
+
+        // Play indicator
+        Icon(
+            imageVector = Icons.Default.PlayArrow,
+            contentDescription = "Play album",
+            tint = SpotifyLightGray.copy(alpha = 0.6f),
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+@Composable
+private fun PlaylistListItem(
+    imageUrl: String?,
+    name: String,
+    ownerName: String?,
+    trackCount: Int,
+    isPublic: Boolean?,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Playlist image
+        if (imageUrl != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = "Playlist image",
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(SpotifyLightGray.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlaylistPlay,
+                    contentDescription = null,
+                    tint = SpotifyLightGray,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        // Playlist info
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isPublic != null) {
+                    Icon(
+                        imageVector = if (isPublic) Icons.Default.Public else Icons.Default.Lock,
+                        contentDescription = if (isPublic) "Public" else "Private",
+                        tint = SpotifyLightGray.copy(alpha = 0.7f),
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+                if (ownerName != null) {
+                    Text(
+                        text = ownerName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SpotifyLightGray,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = " • ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SpotifyLightGray
+                    )
+                }
+                Text(
+                    text = "$trackCount tracks",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SpotifyLightGray.copy(alpha = 0.7f)
+                )
+            }
+        }
+
+        // Play indicator
+        Icon(
+            imageVector = Icons.Default.PlayArrow,
+            contentDescription = "Play playlist",
+            tint = SpotifyLightGray.copy(alpha = 0.6f),
+            modifier = Modifier.size(24.dp)
+        )
     }
 }

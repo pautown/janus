@@ -35,6 +35,17 @@ import net.openid.appauth.AuthorizationResponse
 import javax.inject.Inject
 
 /**
+ * Tab options for the Spotify library browser.
+ */
+enum class SpotifyTab {
+    OVERVIEW,
+    RECENT,
+    LIKED,
+    ALBUMS,
+    PLAYLISTS
+}
+
+/**
  * UI state for Spotify authentication.
  */
 data class SpotifyAuthUiState(
@@ -69,7 +80,26 @@ data class SpotifyAuthUiState(
     val isTogglingPlayback: Boolean = false,
     // Queue
     val queueTracks: List<QueueTrack> = emptyList(),
-    val isLoadingQueue: Boolean = false
+    val isLoadingQueue: Boolean = false,
+    // Tab navigation
+    val selectedTab: SpotifyTab = SpotifyTab.OVERVIEW,
+    // Library lists
+    val recentTracks: List<RecentTrackItem> = emptyList(),
+    val savedTracks: List<SavedTrackItem> = emptyList(),
+    val savedAlbums: List<SavedAlbumItem> = emptyList(),
+    val playlists: List<PlaylistItem> = emptyList(),
+    // Loading states for lists
+    val isLoadingRecent: Boolean = false,
+    val isLoadingSaved: Boolean = false,
+    val isLoadingAlbums: Boolean = false,
+    val isLoadingPlaylists: Boolean = false,
+    // Pagination
+    val hasMoreRecent: Boolean = false,
+    val hasMoreSaved: Boolean = false,
+    val hasMoreAlbums: Boolean = false,
+    val hasMorePlaylists: Boolean = false,
+    // Track save state checking
+    val savedTrackIds: Set<String> = emptySet()
 )
 
 /**
@@ -81,6 +111,60 @@ data class QueueTrack(
     val albumName: String?,
     val imageUrl: String?,
     val durationMs: Long,
+    val uri: String
+)
+
+/**
+ * Track info for recently played list.
+ */
+data class RecentTrackItem(
+    val id: String,
+    val name: String,
+    val artist: String,
+    val albumName: String?,
+    val imageUrl: String?,
+    val playedAt: String?,
+    val uri: String,
+    val durationMs: Long
+)
+
+/**
+ * Track info for saved/liked tracks list.
+ */
+data class SavedTrackItem(
+    val id: String,
+    val name: String,
+    val artist: String,
+    val albumName: String?,
+    val imageUrl: String?,
+    val addedAt: String?,
+    val uri: String,
+    val durationMs: Long
+)
+
+/**
+ * Album info for saved albums list.
+ */
+data class SavedAlbumItem(
+    val id: String,
+    val name: String,
+    val artist: String,
+    val imageUrl: String?,
+    val trackCount: Int,
+    val addedAt: String?,
+    val uri: String
+)
+
+/**
+ * Playlist info for playlists list.
+ */
+data class PlaylistItem(
+    val id: String,
+    val name: String,
+    val ownerName: String?,
+    val imageUrl: String?,
+    val trackCount: Int,
+    val isPublic: Boolean?,
     val uri: String
 )
 
@@ -118,6 +202,24 @@ sealed class SpotifyAuthEvent {
     data object RefreshPlaybackState : SpotifyAuthEvent()
     data object RefreshQueue : SpotifyAuthEvent()
     data class SkipToPosition(val position: Int) : SpotifyAuthEvent()
+    // Tab navigation
+    data class SelectTab(val tab: SpotifyTab) : SpotifyAuthEvent()
+    // Library browsing
+    data object LoadRecentTracks : SpotifyAuthEvent()
+    data object LoadMoreRecentTracks : SpotifyAuthEvent()
+    data object LoadSavedTracks : SpotifyAuthEvent()
+    data object LoadMoreSavedTracks : SpotifyAuthEvent()
+    data object LoadSavedAlbums : SpotifyAuthEvent()
+    data object LoadMoreSavedAlbums : SpotifyAuthEvent()
+    data object LoadPlaylists : SpotifyAuthEvent()
+    data object LoadMorePlaylists : SpotifyAuthEvent()
+    // Track saving/removing
+    data class SaveTrack(val trackId: String) : SpotifyAuthEvent()
+    data class RemoveSavedTrack(val trackId: String) : SpotifyAuthEvent()
+    data class ToggleSaveTrack(val trackId: String, val currentlySaved: Boolean) : SpotifyAuthEvent()
+    // Playback
+    data class PlayTrack(val uri: String) : SpotifyAuthEvent()
+    data class PlayContext(val contextUri: String, val offsetUri: String? = null) : SpotifyAuthEvent()
 }
 
 /**
@@ -225,6 +327,24 @@ class SpotifyAuthViewModel @Inject constructor(
             is SpotifyAuthEvent.RefreshPlaybackState -> refreshPlaybackState()
             is SpotifyAuthEvent.RefreshQueue -> refreshQueue()
             is SpotifyAuthEvent.SkipToPosition -> skipToPosition(event.position)
+            // Tab navigation
+            is SpotifyAuthEvent.SelectTab -> selectTab(event.tab)
+            // Library browsing
+            is SpotifyAuthEvent.LoadRecentTracks -> loadRecentTracks(loadMore = false)
+            is SpotifyAuthEvent.LoadMoreRecentTracks -> loadRecentTracks(loadMore = true)
+            is SpotifyAuthEvent.LoadSavedTracks -> loadSavedTracks(loadMore = false)
+            is SpotifyAuthEvent.LoadMoreSavedTracks -> loadSavedTracks(loadMore = true)
+            is SpotifyAuthEvent.LoadSavedAlbums -> loadSavedAlbums(loadMore = false)
+            is SpotifyAuthEvent.LoadMoreSavedAlbums -> loadSavedAlbums(loadMore = true)
+            is SpotifyAuthEvent.LoadPlaylists -> loadPlaylists(loadMore = false)
+            is SpotifyAuthEvent.LoadMorePlaylists -> loadPlaylists(loadMore = true)
+            // Track saving/removing
+            is SpotifyAuthEvent.SaveTrack -> saveTrack(event.trackId)
+            is SpotifyAuthEvent.RemoveSavedTrack -> removeSavedTrack(event.trackId)
+            is SpotifyAuthEvent.ToggleSaveTrack -> toggleSaveTrack(event.trackId, event.currentlySaved)
+            // Playback
+            is SpotifyAuthEvent.PlayTrack -> playTrack(event.uri)
+            is SpotifyAuthEvent.PlayContext -> playContext(event.contextUri, event.offsetUri)
         }
     }
 
@@ -458,6 +578,565 @@ class SpotifyAuthViewModel @Inject constructor(
                 )
             } finally {
                 _uiState.value = _uiState.value.copy(isLoadingQueue = false)
+            }
+        }
+    }
+
+    /**
+     * Selects a tab and loads its content if not already loaded.
+     */
+    private fun selectTab(tab: SpotifyTab) {
+        _uiState.value = _uiState.value.copy(selectedTab = tab)
+
+        // Auto-load content when tab is selected
+        when (tab) {
+            SpotifyTab.RECENT -> {
+                if (_uiState.value.recentTracks.isEmpty() && !_uiState.value.isLoadingRecent) {
+                    loadRecentTracks(loadMore = false)
+                }
+            }
+            SpotifyTab.LIKED -> {
+                if (_uiState.value.savedTracks.isEmpty() && !_uiState.value.isLoadingSaved) {
+                    loadSavedTracks(loadMore = false)
+                }
+            }
+            SpotifyTab.ALBUMS -> {
+                if (_uiState.value.savedAlbums.isEmpty() && !_uiState.value.isLoadingAlbums) {
+                    loadSavedAlbums(loadMore = false)
+                }
+            }
+            SpotifyTab.PLAYLISTS -> {
+                if (_uiState.value.playlists.isEmpty() && !_uiState.value.isLoadingPlaylists) {
+                    loadPlaylists(loadMore = false)
+                }
+            }
+            SpotifyTab.OVERVIEW -> {
+                // Overview content is loaded on login
+            }
+        }
+    }
+
+    /**
+     * Loads recently played tracks.
+     */
+    private fun loadRecentTracks(loadMore: Boolean) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot load recent tracks: no access token")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isLoadingRecent = true)
+                Log.d(TAG, "=== Loading recent tracks (loadMore=$loadMore) ===")
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                // Recently played uses cursor-based pagination
+                // We'll fetch up to 50 tracks
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.getRecentlyPlayed(limit = 50)
+                }
+
+                Log.d(TAG, "Recent tracks response code: ${response.code()}")
+
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val items = body?.items?.mapNotNull { item ->
+                        val track = item.track
+                        if (track?.id != null && track.name != null) {
+                            RecentTrackItem(
+                                id = track.id,
+                                name = track.name,
+                                artist = track.artists?.firstOrNull()?.name ?: "Unknown Artist",
+                                albumName = track.album?.name,
+                                imageUrl = track.album?.images?.firstOrNull()?.url,
+                                playedAt = item.playedAt,
+                                uri = track.uri,
+                                durationMs = track.durationMs
+                            )
+                        } else null
+                    } ?: emptyList()
+
+                    Log.d(TAG, "Loaded ${items.size} recent tracks")
+
+                    // Check which tracks are saved
+                    val trackIds = items.map { it.id }
+                    if (trackIds.isNotEmpty()) {
+                        checkSavedTracksStatus(trackIds)
+                    }
+
+                    _uiState.value = _uiState.value.copy(
+                        recentTracks = items,
+                        hasMoreRecent = false // Recently played doesn't have traditional pagination
+                    )
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to load recent tracks: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception loading recent tracks: ${e.message}", e)
+            } finally {
+                _uiState.value = _uiState.value.copy(isLoadingRecent = false)
+            }
+        }
+    }
+
+    /**
+     * Loads saved/liked tracks.
+     */
+    private fun loadSavedTracks(loadMore: Boolean) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot load saved tracks: no access token")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isLoadingSaved = true)
+
+                val currentTracks = if (loadMore) _uiState.value.savedTracks else emptyList()
+                val offset = currentTracks.size
+
+                Log.d(TAG, "=== Loading saved tracks (offset=$offset, loadMore=$loadMore) ===")
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.getSavedTracks(limit = 20, offset = offset)
+                }
+
+                Log.d(TAG, "Saved tracks response code: ${response.code()}")
+
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val items = body?.items?.mapNotNull { item ->
+                        val track = item.track
+                        if (track?.id != null && track.name != null) {
+                            SavedTrackItem(
+                                id = track.id,
+                                name = track.name,
+                                artist = track.artists?.firstOrNull()?.name ?: "Unknown Artist",
+                                albumName = track.album?.name,
+                                imageUrl = track.album?.images?.firstOrNull()?.url,
+                                addedAt = item.addedAt,
+                                uri = track.uri,
+                                durationMs = track.durationMs
+                            )
+                        } else null
+                    } ?: emptyList()
+
+                    val total = body?.total ?: 0
+                    val newTracks = currentTracks + items
+                    val hasMore = newTracks.size < total
+
+                    Log.d(TAG, "Loaded ${items.size} saved tracks, total: ${newTracks.size}/$total")
+
+                    _uiState.value = _uiState.value.copy(
+                        savedTracks = newTracks,
+                        hasMoreSaved = hasMore
+                    )
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to load saved tracks: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception loading saved tracks: ${e.message}", e)
+            } finally {
+                _uiState.value = _uiState.value.copy(isLoadingSaved = false)
+            }
+        }
+    }
+
+    /**
+     * Loads saved albums.
+     */
+    private fun loadSavedAlbums(loadMore: Boolean) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot load saved albums: no access token")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isLoadingAlbums = true)
+
+                val currentAlbums = if (loadMore) _uiState.value.savedAlbums else emptyList()
+                val offset = currentAlbums.size
+
+                Log.d(TAG, "=== Loading saved albums (offset=$offset, loadMore=$loadMore) ===")
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.getSavedAlbums(limit = 20, offset = offset)
+                }
+
+                Log.d(TAG, "Saved albums response code: ${response.code()}")
+
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val items = body?.items?.mapNotNull { item ->
+                        val album = item.album
+                        if (album?.id != null && album.name != null) {
+                            SavedAlbumItem(
+                                id = album.id,
+                                name = album.name,
+                                artist = album.artists?.firstOrNull()?.name ?: "Unknown Artist",
+                                imageUrl = album.images?.firstOrNull()?.url,
+                                trackCount = album.totalTracks ?: 0,
+                                addedAt = item.addedAt,
+                                uri = album.uri ?: "spotify:album:${album.id}"
+                            )
+                        } else null
+                    } ?: emptyList()
+
+                    val total = body?.total ?: 0
+                    val newAlbums = currentAlbums + items
+                    val hasMore = newAlbums.size < total
+
+                    Log.d(TAG, "Loaded ${items.size} saved albums, total: ${newAlbums.size}/$total")
+
+                    _uiState.value = _uiState.value.copy(
+                        savedAlbums = newAlbums,
+                        hasMoreAlbums = hasMore
+                    )
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to load saved albums: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception loading saved albums: ${e.message}", e)
+            } finally {
+                _uiState.value = _uiState.value.copy(isLoadingAlbums = false)
+            }
+        }
+    }
+
+    /**
+     * Loads user's playlists.
+     */
+    private fun loadPlaylists(loadMore: Boolean) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot load playlists: no access token")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isLoadingPlaylists = true)
+
+                val currentPlaylists = if (loadMore) _uiState.value.playlists else emptyList()
+                val offset = currentPlaylists.size
+
+                Log.d(TAG, "=== Loading playlists (offset=$offset, loadMore=$loadMore) ===")
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.getPlaylists(limit = 20, offset = offset)
+                }
+
+                Log.d(TAG, "Playlists response code: ${response.code()}")
+
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val items = body?.items?.mapNotNull { playlist ->
+                        if (playlist.id != null && playlist.name != null) {
+                            PlaylistItem(
+                                id = playlist.id,
+                                name = playlist.name,
+                                ownerName = playlist.owner?.displayName ?: playlist.owner?.id,
+                                imageUrl = playlist.images?.firstOrNull()?.url,
+                                trackCount = playlist.tracks?.total ?: 0,
+                                isPublic = playlist.isPublic,
+                                uri = playlist.uri ?: "spotify:playlist:${playlist.id}"
+                            )
+                        } else null
+                    } ?: emptyList()
+
+                    val total = body?.total ?: 0
+                    val newPlaylists = currentPlaylists + items
+                    val hasMore = newPlaylists.size < total
+
+                    Log.d(TAG, "Loaded ${items.size} playlists, total: ${newPlaylists.size}/$total")
+
+                    _uiState.value = _uiState.value.copy(
+                        playlists = newPlaylists,
+                        hasMorePlaylists = hasMore
+                    )
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to load playlists: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception loading playlists: ${e.message}", e)
+            } finally {
+                _uiState.value = _uiState.value.copy(isLoadingPlaylists = false)
+            }
+        }
+    }
+
+    /**
+     * Saves a track to the user's library (like).
+     */
+    private fun saveTrack(trackId: String) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot save track: no access token")
+            _uiState.value = _uiState.value.copy(errorMessage = "Not logged in")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "=== Saving track $trackId ===")
+
+                // Optimistically update UI
+                _uiState.value = _uiState.value.copy(
+                    savedTrackIds = _uiState.value.savedTrackIds + trackId
+                )
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.saveTracks(ids = trackId)
+                }
+
+                Log.d(TAG, "Save track response code: ${response.code()}")
+
+                if (response.isSuccessful || response.code() == 200) {
+                    Log.d(TAG, "Successfully saved track $trackId")
+                    // Update saved tracks count
+                    _uiState.value = _uiState.value.copy(
+                        savedTracksCount = (_uiState.value.savedTracksCount ?: 0) + 1
+                    )
+                } else {
+                    // Revert optimistic update
+                    _uiState.value = _uiState.value.copy(
+                        savedTrackIds = _uiState.value.savedTrackIds - trackId
+                    )
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to save track: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                    _uiState.value = _uiState.value.copy(errorMessage = "Failed to save track")
+                }
+            } catch (e: Exception) {
+                // Revert optimistic update
+                _uiState.value = _uiState.value.copy(
+                    savedTrackIds = _uiState.value.savedTrackIds - trackId
+                )
+                Log.e(TAG, "Exception saving track: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(errorMessage = "Error: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Removes a track from the user's library (unlike).
+     */
+    private fun removeSavedTrack(trackId: String) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot remove track: no access token")
+            _uiState.value = _uiState.value.copy(errorMessage = "Not logged in")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "=== Removing track $trackId ===")
+
+                // Optimistically update UI
+                val previousSavedIds = _uiState.value.savedTrackIds
+                val previousSavedTracks = _uiState.value.savedTracks
+                _uiState.value = _uiState.value.copy(
+                    savedTrackIds = _uiState.value.savedTrackIds - trackId,
+                    savedTracks = _uiState.value.savedTracks.filter { it.id != trackId }
+                )
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.removeSavedTracks(ids = trackId)
+                }
+
+                Log.d(TAG, "Remove track response code: ${response.code()}")
+
+                if (response.isSuccessful || response.code() == 200) {
+                    Log.d(TAG, "Successfully removed track $trackId")
+                    // Update saved tracks count
+                    val currentCount = _uiState.value.savedTracksCount ?: 1
+                    _uiState.value = _uiState.value.copy(
+                        savedTracksCount = maxOf(0, currentCount - 1)
+                    )
+                } else {
+                    // Revert optimistic update
+                    _uiState.value = _uiState.value.copy(
+                        savedTrackIds = previousSavedIds,
+                        savedTracks = previousSavedTracks
+                    )
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to remove track: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                    _uiState.value = _uiState.value.copy(errorMessage = "Failed to remove track")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception removing track: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(errorMessage = "Error: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Toggles the save state of a track.
+     */
+    private fun toggleSaveTrack(trackId: String, currentlySaved: Boolean) {
+        if (currentlySaved) {
+            removeSavedTrack(trackId)
+        } else {
+            saveTrack(trackId)
+        }
+    }
+
+    /**
+     * Checks which tracks are saved in the user's library.
+     */
+    private fun checkSavedTracksStatus(trackIds: List<String>) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank() || trackIds.isEmpty()) return
+
+        viewModelScope.launch {
+            try {
+                // Split into chunks of 50 (API limit)
+                trackIds.chunked(50).forEach { chunk ->
+                    val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = false)
+                    val response = withContext(Dispatchers.IO) {
+                        apiClient.apiService.checkSavedTracks(ids = chunk.joinToString(","))
+                    }
+
+                    if (response.isSuccessful) {
+                        val savedStatus = response.body() ?: return@forEach
+                        val newSavedIds = chunk.filterIndexed { index, _ ->
+                            savedStatus.getOrNull(index) == true
+                        }.toSet()
+
+                        _uiState.value = _uiState.value.copy(
+                            savedTrackIds = _uiState.value.savedTrackIds + newSavedIds
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception checking saved tracks: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * Plays a track by its URI.
+     */
+    private fun playTrack(uri: String) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot play track: no access token")
+            _uiState.value = _uiState.value.copy(errorMessage = "Not logged in")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "=== Playing track $uri ===")
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.play(
+                        body = com.spotsdk.api.PlayRequest(uris = listOf(uri))
+                    )
+                }
+
+                Log.d(TAG, "Play track response code: ${response.code()}")
+
+                if (response.isSuccessful || response.code() == 204) {
+                    Log.d(TAG, "Successfully started playback")
+                    // Refresh playback state after a short delay
+                    kotlinx.coroutines.delay(500)
+                    refreshPlaybackState()
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to play track: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                    if (response.code() == 404) {
+                        _uiState.value = _uiState.value.copy(
+                            errorMessage = "No active device found. Open Spotify on a device first."
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(errorMessage = "Failed to play track")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception playing track: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(errorMessage = "Error: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Plays a context (album, playlist) with optional offset.
+     */
+    private fun playContext(contextUri: String, offsetUri: String?) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot play context: no access token")
+            _uiState.value = _uiState.value.copy(errorMessage = "Not logged in")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "=== Playing context $contextUri (offset=$offsetUri) ===")
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val offset = offsetUri?.let { com.spotsdk.api.PlayOffset(uri = it) }
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.play(
+                        body = com.spotsdk.api.PlayRequest(
+                            contextUri = contextUri,
+                            offset = offset
+                        )
+                    )
+                }
+
+                Log.d(TAG, "Play context response code: ${response.code()}")
+
+                if (response.isSuccessful || response.code() == 204) {
+                    Log.d(TAG, "Successfully started context playback")
+                    kotlinx.coroutines.delay(500)
+                    refreshPlaybackState()
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to play context: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                    if (response.code() == 404) {
+                        _uiState.value = _uiState.value.copy(
+                            errorMessage = "No active device found. Open Spotify on a device first."
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(errorMessage = "Failed to play")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception playing context: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(errorMessage = "Error: ${e.message}")
             }
         }
     }
