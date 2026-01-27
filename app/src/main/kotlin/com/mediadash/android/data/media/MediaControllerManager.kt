@@ -37,6 +37,7 @@ class MediaControllerManager @Inject constructor(
     private val albumArtFetcher: AlbumArtFetcher,
     private val albumArtCache: AlbumArtCache,
     private val playbackSourceTracker: PlaybackSourceTracker,
+    private val spotifyPlaybackController: com.mediadash.android.data.spotify.SpotifyPlaybackController,
     @ApplicationScope private val scope: CoroutineScope,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
@@ -323,6 +324,12 @@ class MediaControllerManager @Inject constructor(
             CRC32Util.generateAlbumArtHash(artist, album)
         } else null
 
+        // Get Spotify IDs from cached playback state when Spotify is active
+        val isSpotify = _controlledAppName.value?.equals("Spotify", ignoreCase = true) == true
+        val spotifyTrackId = if (isSpotify) spotifyPlaybackController.getCachedCurrentTrackId() else null
+        val spotifyAlbumId = if (isSpotify) spotifyPlaybackController.getCachedCurrentAlbumId() else null
+        val spotifyArtistId = if (isSpotify) spotifyPlaybackController.getCachedCurrentArtistId() else null
+
         val state = MediaState(
             isPlaying = isPlaying,
             playbackState = playbackStateString,
@@ -333,11 +340,14 @@ class MediaControllerManager @Inject constructor(
             position = playbackState?.position ?: 0L,
             volume = getCurrentVolume(),
             albumArtHash = albumArtHash,
-            mediaChannel = _controlledAppName.value
+            mediaChannel = _controlledAppName.value,
+            spotifyTrackId = spotifyTrackId,
+            spotifyAlbumId = spotifyAlbumId,
+            spotifyArtistId = spotifyArtistId
         )
 
         _currentMediaState.value = state
-        Log.d(TAG, "Media state updated: ${state.trackTitle} - ${state.artist} [${state.mediaChannel}]")
+        Log.d(TAG, "Media state updated: ${state.trackTitle} - ${state.artist} [${state.mediaChannel}] (trackId=$spotifyTrackId, albumId=$spotifyAlbumId, artistId=$spotifyArtistId)")
     }
 
     /**
