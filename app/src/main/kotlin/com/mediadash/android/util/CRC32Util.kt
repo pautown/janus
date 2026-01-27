@@ -38,6 +38,19 @@ object CRC32Util {
     }
 
     /**
+     * Generates the artist art hash for artist images.
+     * Uses just the artist name (no album).
+     * @param artist The artist name
+     * @return CRC32 hash as a decimal string
+     */
+    fun generateArtistArtHash(artist: String): String {
+        val normalized = artist.trim().lowercase(Locale.ENGLISH)
+        val crc = CRC32()
+        crc.update(normalized.toByteArray(Charsets.UTF_8))
+        return crc.value.toString()
+    }
+
+    /**
      * Computes CRC32 checksum of a byte array.
      * @param data The data to checksum
      * @return CRC32 value as a Long

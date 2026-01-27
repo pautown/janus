@@ -1022,6 +1022,236 @@ class GattServerManager @Inject constructor(
     }
 
     /**
+     * Notifies all connected devices with Spotify playback state (shuffle, repeat, liked).
+     * Uses JSON format with header type=7.
+     * Response format: {"se":true/false,"rm":"off|track|context","id":"trackId","lk":true/false,"t":123456}
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifySpotifyPlaybackState(state: com.mediadash.android.domain.model.SpotifyPlaybackState) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("SPOTIFY", "═══════════════════════════════════════════════")
+        Log.i("SPOTIFY", "📤 SENDING SPOTIFY PLAYBACK STATE")
+        Log.i("SPOTIFY", "   Shuffle: ${state.shuffleEnabled}")
+        Log.i("SPOTIFY", "   Repeat: ${state.repeatMode}")
+        Log.i("SPOTIFY", "   Track ID: ${state.currentTrackId ?: "(none)"}")
+        Log.i("SPOTIFY", "   Liked: ${state.isTrackLiked}")
+
+        // Compact format: {"se":bool,"rm":"mode","id":"trackId","lk":bool,"t":timestamp}
+        val compactJson = buildString {
+            append("{")
+            append("\"se\":${state.shuffleEnabled},")
+            append("\"rm\":\"${state.repeatMode}\",")
+            if (state.currentTrackId != null) {
+                append("\"id\":\"${state.currentTrackId}\",")
+            }
+            append("\"lk\":${state.isTrackLiked},")
+            append("\"t\":${state.timestamp}")
+            append("}")
+        }
+
+        val jsonData = compactJson.toByteArray(Charsets.UTF_8)
+        Log.i("SPOTIFY", "   JSON size: ${jsonData.size} bytes")
+
+        // Split into 500-byte chunks if needed (unlikely for this small payload)
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+
+        Log.i("SPOTIFY", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+
+                // Header: [type=7][chunkIndex][totalChunks][data...]
+                // type=7 indicates Spotify playback state
+                val header = byteArrayOf(7, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                if (!sent) {
+                    Log.w(TAG, "Failed to notify Spotify state chunk $index to ${device.address}")
+                    Log.w("SPOTIFY", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
+                    break
+                }
+            }
+            Log.i("SPOTIFY", "   ✅ Sent to ${device.address}")
+        }
+        Log.i("SPOTIFY", "═══════════════════════════════════════════════")
+    }
+
+    /**
+     * Notifies all connected devices with Spotify library overview.
+     * Uses JSON format with header type=8.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifySpotifyLibraryOverview(overview: com.mediadash.android.domain.model.SpotifyLibraryOverview) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════")
+        Log.i("SPOTIFY_LIB", "📤 SENDING LIBRARY OVERVIEW")
+
+        val jsonData = json.encodeToString(overview).toByteArray(Charsets.UTF_8)
+        Log.i("SPOTIFY_LIB", "   JSON size: ${jsonData.size} bytes")
+
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+                // Header: [type=8][chunkIndex][totalChunks][data...]
+                val header = byteArrayOf(8, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                server.notifyCharacteristicChanged(device, characteristic, false)
+            }
+        }
+        Log.i("SPOTIFY_LIB", "✅ Library overview sent")
+    }
+
+    /**
+     * Notifies all connected devices with Spotify track list (recent or liked).
+     * Uses JSON format with header type=9.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifySpotifyTrackList(response: com.mediadash.android.domain.model.SpotifyTrackListResponse) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════")
+        Log.i("SPOTIFY_LIB", "📤 SENDING TRACK LIST (${response.type})")
+        Log.i("SPOTIFY_LIB", "   Tracks: ${response.items.size}")
+
+        val jsonData = json.encodeToString(response).toByteArray(Charsets.UTF_8)
+        Log.i("SPOTIFY_LIB", "   JSON size: ${jsonData.size} bytes")
+
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+        Log.i("SPOTIFY_LIB", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+                // Header: [type=9][chunkIndex][totalChunks][data...]
+                val header = byteArrayOf(9, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                server.notifyCharacteristicChanged(device, characteristic, false)
+            }
+        }
+        Log.i("SPOTIFY_LIB", "✅ Track list sent")
+    }
+
+    /**
+     * Notifies all connected devices with Spotify album list.
+     * Uses JSON format with header type=10.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifySpotifyAlbumList(response: com.mediadash.android.domain.model.SpotifyAlbumListResponse) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════")
+        Log.i("SPOTIFY_LIB", "📤 SENDING ALBUM LIST")
+        Log.i("SPOTIFY_LIB", "   Albums: ${response.items.size}")
+
+        val jsonData = json.encodeToString(response).toByteArray(Charsets.UTF_8)
+        Log.i("SPOTIFY_LIB", "   JSON size: ${jsonData.size} bytes")
+
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+        Log.i("SPOTIFY_LIB", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+                // Header: [type=10][chunkIndex][totalChunks][data...]
+                val header = byteArrayOf(10, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                server.notifyCharacteristicChanged(device, characteristic, false)
+            }
+        }
+        Log.i("SPOTIFY_LIB", "✅ Album list sent")
+    }
+
+    /**
+     * Notifies all connected devices with Spotify playlist list.
+     * Uses JSON format with header type=11.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifySpotifyPlaylistList(response: com.mediadash.android.domain.model.SpotifyPlaylistListResponse) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════")
+        Log.i("SPOTIFY_LIB", "📤 SENDING PLAYLIST LIST")
+        Log.i("SPOTIFY_LIB", "   Playlists: ${response.items.size}")
+
+        val jsonData = json.encodeToString(response).toByteArray(Charsets.UTF_8)
+        Log.i("SPOTIFY_LIB", "   JSON size: ${jsonData.size} bytes")
+
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+        Log.i("SPOTIFY_LIB", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+                // Header: [type=11][chunkIndex][totalChunks][data...]
+                val header = byteArrayOf(11, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                server.notifyCharacteristicChanged(device, characteristic, false)
+            }
+        }
+        Log.i("SPOTIFY_LIB", "✅ Playlist list sent")
+    }
+
+    /**
+     * Notifies all connected devices with Spotify followed artists list.
+     * Uses JSON format with header type=12.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun notifySpotifyArtistList(response: com.mediadash.android.domain.model.SpotifyArtistListResponse) {
+        val characteristic = podcastInfoCharacteristic ?: return
+        val server = gattServer ?: return
+
+        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════")
+        Log.i("SPOTIFY_LIB", "📤 SENDING ARTIST LIST")
+        Log.i("SPOTIFY_LIB", "   Artists: ${response.items.size}")
+
+        val jsonData = json.encodeToString(response).toByteArray(Charsets.UTF_8)
+        Log.i("SPOTIFY_LIB", "   JSON size: ${jsonData.size} bytes")
+
+        val maxChunkSize = 500
+        val chunks = jsonData.toList().chunked(maxChunkSize)
+        Log.i("SPOTIFY_LIB", "   BLE chunks: ${chunks.size}")
+
+        for (device in notificationEnabledDevices) {
+            for ((index, chunk) in chunks.withIndex()) {
+                throttler.throttle()
+                // Header: [type=12][chunkIndex][totalChunks][data...]
+                val header = byteArrayOf(12, index.toByte(), chunks.size.toByte())
+                val chunkData = header + chunk.toByteArray()
+                characteristic.value = chunkData
+                @Suppress("DEPRECATION")
+                server.notifyCharacteristicChanged(device, characteristic, false)
+            }
+        }
+        Log.i("SPOTIFY_LIB", "✅ Artist list sent")
+    }
+
+    /**
      * Notifies all connected devices with lyrics data.
      * Sends data in chunks to accommodate BLE MTU limits.
      * Each CompactLyricsResponse is serialized to JSON, then split into 500-byte BLE packets.

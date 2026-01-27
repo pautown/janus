@@ -108,6 +108,33 @@ data class SpotifyPlaylistListResponse(
 )
 
 /**
+ * An artist item for library lists (followed artists).
+ */
+@Serializable
+data class SpotifyArtistItem(
+    @SerialName("i") val id: String,                 // Spotify artist ID
+    @SerialName("n") val name: String,               // Artist name (truncated)
+    @SerialName("g") val genres: List<String>,       // Up to 3 genres
+    @SerialName("f") val followers: Int,             // Follower count
+    @SerialName("u") val uri: String,                // Spotify URI
+    @SerialName("im") val imageUrl: String?,         // Artist image URL
+    @SerialName("ah") val artHash: String? = null    // Art hash for requesting art
+)
+
+/**
+ * Cursor-paginated response for artist lists.
+ * Artists use cursor pagination, not offset/limit.
+ */
+@Serializable
+data class SpotifyArtistListResponse(
+    @SerialName("it") val items: List<SpotifyArtistItem>,
+    @SerialName("tt") val total: Int,
+    @SerialName("hm") val hasMore: Boolean,
+    @SerialName("nc") val nextCursor: String? = null,  // Cursor for next page
+    @SerialName("t") val timestamp: Long = System.currentTimeMillis()
+)
+
+/**
  * Helper to truncate strings for BLE transmission.
  */
 fun String.truncateForBle(maxLen: Int): String {

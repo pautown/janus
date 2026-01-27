@@ -402,6 +402,58 @@ class SpotifyLibraryManager @Inject constructor(
     }
 
     /**
+     * Fetch followed artists.
+     * Artists use cursor-based pagination (not offset/limit).
+     */
+    suspend fun fetchFollowedArtists(limit: Int = 20, afterCursor: String? = null): SpotifyArtistListResponse? {
+        val accessToken = getAccessToken() ?: return null
+
+        return try {
+            Log.d(TAG, "=== Fetching followed artists (limit=$limit, after=$afterCursor) ===")
+            val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = false)
+
+            val response = withContext(Dispatchers.IO) {
+                apiClient.apiService.getFollowedArtists(limit = limit, after = afterCursor)
+            }
+
+            if (!response.isSuccessful) {
+                Log.e(TAG, "Failed to get followed artists: ${response.code()}")
+                return null
+            }
+
+            val body = response.body()?.artists ?: return null
+
+            val artists = body.items?.mapNotNull { artist ->
+                val artistName = artist.name?.truncateForBle(MAX_ARTIST_NAME) ?: "Unknown"
+                // Generate art hash using artist name for consistent cache lookup
+                val artHash = CRC32Util.generateArtistArtHash(artistName)
+                SpotifyArtistItem(
+                    id = artist.id ?: return@mapNotNull null,
+                    name = artistName,
+                    genres = artist.genres?.take(3) ?: emptyList(),
+                    followers = artist.followers?.total ?: 0,
+                    uri = artist.uri ?: "spotify:artist:${artist.id}",
+                    imageUrl = artist.images?.lastOrNull()?.url, // Smallest image
+                    artHash = artHash
+                )
+            } ?: emptyList()
+
+            val result = SpotifyArtistListResponse(
+                items = artists,
+                total = body.total ?: 0,
+                hasMore = body.cursors?.after != null,
+                nextCursor = body.cursors?.after
+            )
+
+            Log.d(TAG, "Got ${artists.size} followed artists (total: ${body.total})")
+            result
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetching followed artists: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
      * Play a Spotify URI (track, album, or playlist).
      */
     suspend fun playUri(uri: String): Boolean {

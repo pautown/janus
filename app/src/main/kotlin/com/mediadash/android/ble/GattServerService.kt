@@ -343,6 +343,13 @@ class GattServerService : Service() {
                         Log.i("SPOTIFY_LIB", "📋 REQUEST: Playlists (offset=$offset, limit=$limit)")
                         handleLibraryPlaylistsRequest(offset, limit)
                     }
+                    PlaybackCommand.ACTION_REQUEST_LIBRARY_ARTISTS -> {
+                        val limit = if (command.limit > 0) command.limit else 20
+                        val afterCursor = command.after
+                        Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
+                        Log.i("SPOTIFY_LIB", "👤 REQUEST: Followed artists (limit=$limit, after=$afterCursor)")
+                        handleLibraryArtistsRequest(limit, afterCursor)
+                    }
                     PlaybackCommand.ACTION_PLAY_SPOTIFY_URI -> {
                         val uri = command.uri ?: ""
                         Log.i("SPOTIFY_LIB", "═══════════════════════════════════════════════════════")
@@ -1074,6 +1081,36 @@ class GattServerService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e("SPOTIFY_LIB", "❌ Error fetching playlists", e)
+            }
+        }
+    }
+
+    private fun handleLibraryArtistsRequest(limit: Int, afterCursor: String?) {
+        serviceScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+
+                if (!spotifyLibraryManager.isConnected()) {
+                    Log.w("SPOTIFY_LIB", "⚠️ Spotify not connected")
+                    return@launch
+                }
+
+                val response = spotifyLibraryManager.fetchFollowedArtists(limit, afterCursor)
+                val elapsed = System.currentTimeMillis() - startTime
+
+                if (response != null) {
+                    Log.i("SPOTIFY_LIB", "📤 RESPONSE: Followed artists")
+                    Log.i("SPOTIFY_LIB", "   Artists: ${response.items.size} (total: ${response.total})")
+                    Log.i("SPOTIFY_LIB", "   Has more: ${response.hasMore}, next cursor: ${response.nextCursor}")
+                    Log.i("SPOTIFY_LIB", "   Processing time: ${elapsed}ms")
+
+                    gattServerManager.notifySpotifyArtistList(response)
+                    Log.i("SPOTIFY_LIB", "✅ Artists transmitted via BLE")
+                } else {
+                    Log.w("SPOTIFY_LIB", "⚠️ Failed to fetch followed artists")
+                }
+            } catch (e: Exception) {
+                Log.e("SPOTIFY_LIB", "❌ Error fetching followed artists", e)
             }
         }
     }

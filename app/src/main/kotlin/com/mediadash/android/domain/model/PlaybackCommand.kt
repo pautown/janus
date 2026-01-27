@@ -19,7 +19,8 @@ data class PlaybackCommand(
     val service: String? = null,        // For check_connection: service name (e.g., "spotify")
     val queueIndex: Int = -1,           // For queue_shift: position in queue to skip to (0-based)
     val trackId: String? = null,        // For like_track/unlike_track: Spotify track ID (null = current track)
-    val uri: String? = null             // For play_uri: Spotify URI (spotify:track:... or spotify:album:... etc.)
+    val uri: String? = null,            // For play_uri: Spotify URI (spotify:track:... or spotify:album:... etc.)
+    val after: String? = null            // For library_artists: cursor for pagination
 ) {
     companion object {
         // Valid action types
@@ -69,6 +70,7 @@ data class PlaybackCommand(
         const val ACTION_REQUEST_LIBRARY_LIKED = "library_liked"         // Get saved tracks (uses offset, limit)
         const val ACTION_REQUEST_LIBRARY_ALBUMS = "library_albums"       // Get saved albums (uses offset, limit)
         const val ACTION_REQUEST_LIBRARY_PLAYLISTS = "library_playlists" // Get playlists (uses offset, limit)
+        const val ACTION_REQUEST_LIBRARY_ARTISTS = "library_artists"     // Get followed artists (uses limit, after cursor)
         const val ACTION_PLAY_SPOTIFY_URI = "play_uri"                   // Play Spotify URI (uses 'uri' field)
 
         // Legacy - still supported for backwards compatibility
@@ -105,6 +107,7 @@ data class PlaybackCommand(
             ACTION_REQUEST_LIBRARY_LIKED,
             ACTION_REQUEST_LIBRARY_ALBUMS,
             ACTION_REQUEST_LIBRARY_PLAYLISTS,
+            ACTION_REQUEST_LIBRARY_ARTISTS,
             ACTION_PLAY_SPOTIFY_URI
         )
     }
