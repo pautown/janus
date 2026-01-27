@@ -61,6 +61,9 @@ class MediaControllerManager @Inject constructor(
     private val _controlledAppName = MutableStateFlow<String?>(null)
     val controlledAppName: StateFlow<String?> = _controlledAppName.asStateFlow()
 
+    // Track the package name of the controlled app for reliable identification
+    private var controlledPackageName: String? = null
+
     private var lastAlbumArtHash: String? = null
     private var isPodcastActive = false
 
@@ -96,6 +99,7 @@ class MediaControllerManager @Inject constructor(
         // Mark external app as active source
         isPodcastActive = false
         _controlledAppName.value = appName
+        controlledPackageName = controller.packageName
         // Unregister from previous controller
         controllerCallback?.let { callback ->
             activeController?.unregisterCallback(callback)
@@ -182,6 +186,7 @@ class MediaControllerManager @Inject constructor(
         _currentAlbumArtChunks.value = null
         _currentAlbumArtBitmap.value = null
         _controlledAppName.value = null
+        controlledPackageName = null
         lastAlbumArtHash = null
 
         Log.d(TAG, "Active controller cleared")
@@ -325,7 +330,8 @@ class MediaControllerManager @Inject constructor(
         } else null
 
         // Get Spotify IDs from cached playback state when Spotify is active
-        val isSpotify = _controlledAppName.value?.equals("Spotify", ignoreCase = true) == true
+        // Check by package name for reliable detection (package is always com.spotify.music)
+        val isSpotify = controlledPackageName?.contains("com.spotify", ignoreCase = true) == true
         val spotifyTrackId = if (isSpotify) spotifyPlaybackController.getCachedCurrentTrackId() else null
         val spotifyAlbumId = if (isSpotify) spotifyPlaybackController.getCachedCurrentAlbumId() else null
         val spotifyArtistId = if (isSpotify) spotifyPlaybackController.getCachedCurrentArtistId() else null
@@ -400,7 +406,15 @@ class MediaControllerManager @Inject constructor(
             _currentAlbumArtBitmap.value = null
         }
 
-        // NOW update media state - chunks are guaranteed to be ready
+        // If Spotify is active, fetch playback state to get track/album/artist IDs
+        // This must happen BEFORE updateMediaState() so cached IDs are available
+        val isSpotify = controlledPackageName?.contains("com.spotify", ignoreCase = true) == true
+        if (isSpotify) {
+            Log.d(TAG, "Fetching Spotify playback state for track/album/artist IDs")
+            spotifyPlaybackController.fetchPlaybackState()
+        }
+
+        // NOW update media state - chunks and Spotify IDs are guaranteed to be ready
         updateMediaState()
     }
 
