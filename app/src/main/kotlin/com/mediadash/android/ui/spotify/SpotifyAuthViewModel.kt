@@ -42,6 +42,7 @@ enum class SpotifyTab {
     RECENT,
     LIKED,
     ALBUMS,
+    ARTISTS,
     PLAYLISTS
 }
 
@@ -87,16 +88,20 @@ data class SpotifyAuthUiState(
     val recentTracks: List<RecentTrackItem> = emptyList(),
     val savedTracks: List<SavedTrackItem> = emptyList(),
     val savedAlbums: List<SavedAlbumItem> = emptyList(),
+    val followedArtists: List<ArtistItem> = emptyList(),
     val playlists: List<PlaylistItem> = emptyList(),
     // Loading states for lists
     val isLoadingRecent: Boolean = false,
     val isLoadingSaved: Boolean = false,
     val isLoadingAlbums: Boolean = false,
+    val isLoadingArtists: Boolean = false,
     val isLoadingPlaylists: Boolean = false,
     // Pagination
     val hasMoreRecent: Boolean = false,
     val hasMoreSaved: Boolean = false,
     val hasMoreAlbums: Boolean = false,
+    val hasMoreArtists: Boolean = false,
+    val nextArtistsCursor: String? = null,
     val hasMorePlaylists: Boolean = false,
     // Track save state checking
     val savedTrackIds: Set<String> = emptySet()
@@ -169,6 +174,18 @@ data class PlaylistItem(
 )
 
 /**
+ * Artist info for followed artists list.
+ */
+data class ArtistItem(
+    val id: String,
+    val name: String,
+    val imageUrl: String?,
+    val genres: List<String>,
+    val followerCount: Int,
+    val uri: String
+)
+
+/**
  * Shuffle states for Spotify playback.
  */
 enum class ShuffleState {
@@ -211,6 +228,8 @@ sealed class SpotifyAuthEvent {
     data object LoadMoreSavedTracks : SpotifyAuthEvent()
     data object LoadSavedAlbums : SpotifyAuthEvent()
     data object LoadMoreSavedAlbums : SpotifyAuthEvent()
+    data object LoadFollowedArtists : SpotifyAuthEvent()
+    data object LoadMoreFollowedArtists : SpotifyAuthEvent()
     data object LoadPlaylists : SpotifyAuthEvent()
     data object LoadMorePlaylists : SpotifyAuthEvent()
     // Track saving/removing
@@ -336,6 +355,8 @@ class SpotifyAuthViewModel @Inject constructor(
             is SpotifyAuthEvent.LoadMoreSavedTracks -> loadSavedTracks(loadMore = true)
             is SpotifyAuthEvent.LoadSavedAlbums -> loadSavedAlbums(loadMore = false)
             is SpotifyAuthEvent.LoadMoreSavedAlbums -> loadSavedAlbums(loadMore = true)
+            is SpotifyAuthEvent.LoadFollowedArtists -> loadFollowedArtists(loadMore = false)
+            is SpotifyAuthEvent.LoadMoreFollowedArtists -> loadFollowedArtists(loadMore = true)
             is SpotifyAuthEvent.LoadPlaylists -> loadPlaylists(loadMore = false)
             is SpotifyAuthEvent.LoadMorePlaylists -> loadPlaylists(loadMore = true)
             // Track saving/removing
@@ -605,6 +626,11 @@ class SpotifyAuthViewModel @Inject constructor(
                     loadSavedAlbums(loadMore = false)
                 }
             }
+            SpotifyTab.ARTISTS -> {
+                if (_uiState.value.followedArtists.isEmpty() && !_uiState.value.isLoadingArtists) {
+                    loadFollowedArtists(loadMore = false)
+                }
+            }
             SpotifyTab.PLAYLISTS -> {
                 if (_uiState.value.playlists.isEmpty() && !_uiState.value.isLoadingPlaylists) {
                     loadPlaylists(loadMore = false)
@@ -815,6 +841,73 @@ class SpotifyAuthViewModel @Inject constructor(
                 Log.e(TAG, "Exception loading saved albums: ${e.message}", e)
             } finally {
                 _uiState.value = _uiState.value.copy(isLoadingAlbums = false)
+            }
+        }
+    }
+
+    /**
+     * Loads followed artists.
+     * Artists use cursor-based pagination, not offset/limit.
+     */
+    private fun loadFollowedArtists(loadMore: Boolean) {
+        val accessToken = _uiState.value.accessToken
+        if (accessToken.isNullOrBlank()) {
+            Log.e(TAG, "Cannot load followed artists: no access token")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isLoadingArtists = true)
+
+                val currentArtists = if (loadMore) _uiState.value.followedArtists else emptyList()
+                val cursor = if (loadMore) _uiState.value.nextArtistsCursor else null
+
+                Log.d(TAG, "=== Loading followed artists (cursor=$cursor, loadMore=$loadMore) ===")
+
+                val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
+
+                val response = withContext(Dispatchers.IO) {
+                    apiClient.apiService.getFollowedArtists(limit = 20, after = cursor)
+                }
+
+                Log.d(TAG, "Followed artists response code: ${response.code()}")
+
+                if (response.isSuccessful) {
+                    val body = response.body()?.artists
+                    val items = body?.items?.mapNotNull { artist ->
+                        if (artist.id != null && artist.name != null) {
+                            ArtistItem(
+                                id = artist.id,
+                                name = artist.name,
+                                imageUrl = artist.images?.firstOrNull()?.url,
+                                genres = artist.genres?.take(3) ?: emptyList(),
+                                followerCount = artist.followers?.total ?: 0,
+                                uri = artist.uri ?: "spotify:artist:${artist.id}"
+                            )
+                        } else null
+                    } ?: emptyList()
+
+                    val nextCursor = body?.cursors?.after
+                    val hasMore = nextCursor != null
+                    val newArtists = currentArtists + items
+
+                    Log.d(TAG, "Loaded ${items.size} followed artists, total: ${newArtists.size}, hasMore: $hasMore")
+
+                    _uiState.value = _uiState.value.copy(
+                        followedArtists = newArtists,
+                        hasMoreArtists = hasMore,
+                        nextArtistsCursor = nextCursor
+                    )
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to load followed artists: ${response.code()}")
+                    Log.e(TAG, "Error body: $errorBody")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception loading followed artists: ${e.message}", e)
+            } finally {
+                _uiState.value = _uiState.value.copy(isLoadingArtists = false)
             }
         }
     }

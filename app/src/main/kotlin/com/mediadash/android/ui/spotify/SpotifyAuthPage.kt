@@ -259,6 +259,17 @@ fun SpotifyAuthPage(
                         )
                     }
 
+                    SpotifyTab.ARTISTS -> {
+                        FollowedArtistsSection(
+                            artists = uiState.followedArtists,
+                            isLoading = uiState.isLoadingArtists,
+                            hasMore = uiState.hasMoreArtists,
+                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadFollowedArtists) },
+                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreFollowedArtists) },
+                            onArtistClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
+                        )
+                    }
+
                     SpotifyTab.PLAYLISTS -> {
                         PlaylistsSection(
                             playlists = uiState.playlists,
@@ -1571,6 +1582,7 @@ private fun SpotifyTabRow(
                     SpotifyTab.RECENT -> "Recent"
                     SpotifyTab.LIKED -> "Liked"
                     SpotifyTab.ALBUMS -> "Albums"
+                    SpotifyTab.ARTISTS -> "Artists"
                     SpotifyTab.PLAYLISTS -> "Playlists"
                 },
                 icon = when (tab) {
@@ -1578,6 +1590,7 @@ private fun SpotifyTabRow(
                     SpotifyTab.RECENT -> Icons.Default.History
                     SpotifyTab.LIKED -> Icons.Default.Favorite
                     SpotifyTab.ALBUMS -> Icons.Default.Album
+                    SpotifyTab.ARTISTS -> Icons.Default.Person
                     SpotifyTab.PLAYLISTS -> Icons.Default.PlaylistPlay
                 },
                 isSelected = tab == selectedTab,
@@ -1955,6 +1968,123 @@ private fun SavedAlbumsSection(
 }
 
 @Composable
+private fun FollowedArtistsSection(
+    artists: List<ArtistItem>,
+    isLoading: Boolean,
+    hasMore: Boolean,
+    onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
+    onArtistClick: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SpotifyDarkGray),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Followed Artists",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    if (artists.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "(${artists.size}${if (hasMore) "+" else ""})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SpotifyLightGray
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    if (isLoading && artists.isEmpty()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = SpotifyGreen,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            tint = SpotifyLightGray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (artists.isEmpty() && !isLoading) {
+                Text(
+                    text = "No followed artists yet",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SpotifyLightGray.copy(alpha = 0.6f)
+                )
+            } else {
+                artists.forEach { artist ->
+                    ArtistListItem(
+                        imageUrl = artist.imageUrl,
+                        name = artist.name,
+                        genres = artist.genres,
+                        followerCount = artist.followerCount,
+                        onClick = { onArtistClick(artist.uri) }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                if (hasMore) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = onLoadMore,
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SpotifyGreen.copy(alpha = 0.2f),
+                            contentColor = SpotifyGreen
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = SpotifyGreen,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Load More")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PlaylistsSection(
     playlists: List<PlaylistItem>,
     isLoading: Boolean,
@@ -2256,6 +2386,103 @@ private fun AlbumListItem(
             tint = SpotifyLightGray.copy(alpha = 0.6f),
             modifier = Modifier.size(24.dp)
         )
+    }
+}
+
+@Composable
+private fun ArtistListItem(
+    imageUrl: String?,
+    name: String,
+    genres: List<String>,
+    followerCount: Int,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Artist image (circular)
+        if (imageUrl != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = "Artist image",
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(SpotifyLightGray.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = SpotifyLightGray,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        // Artist info
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (genres.isNotEmpty()) {
+                Text(
+                    text = genres.joinToString(", "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SpotifyLightGray,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                text = formatFollowerCount(followerCount),
+                style = MaterialTheme.typography.labelSmall,
+                color = SpotifyLightGray.copy(alpha = 0.7f)
+            )
+        }
+
+        // Play indicator
+        Icon(
+            imageVector = Icons.Default.PlayArrow,
+            contentDescription = "Play artist",
+            tint = SpotifyLightGray.copy(alpha = 0.6f),
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+/**
+ * Formats a follower count into a human-readable string.
+ */
+private fun formatFollowerCount(count: Int): String {
+    return when {
+        count >= 1_000_000 -> String.format("%.1fM followers", count / 1_000_000.0)
+        count >= 1_000 -> String.format("%.1fK followers", count / 1_000.0)
+        else -> "$count followers"
     }
 }
 

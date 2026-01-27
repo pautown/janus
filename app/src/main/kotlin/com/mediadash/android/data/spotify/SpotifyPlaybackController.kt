@@ -9,6 +9,9 @@ import com.mediadash.android.di.SpotifyDataStore
 import com.mediadash.android.domain.model.SpotifyPlaybackState
 import com.spotsdk.api.SpotifyApiClient
 import com.spotsdk.api.createSimple
+import com.spotsdk.models.Album
+import com.spotsdk.models.Artist
+import com.spotsdk.models.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
@@ -407,6 +410,79 @@ class SpotifyPlaybackController @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Exception checking track: ${e.message}", e)
             false
+        }
+    }
+
+    /**
+     * Fetch full album details by Spotify album ID.
+     *
+     * @param albumId Spotify album ID
+     * @return Album object if successful, null otherwise
+     */
+    suspend fun fetchAlbumDetails(albumId: String): Album? {
+        val accessToken = getAccessToken()
+        if (accessToken == null) {
+            Log.w(TAG, "Cannot fetch album details: no valid access token")
+            return null
+        }
+
+        return try {
+            Log.d(TAG, "=== Fetching album details for $albumId ===")
+            val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = false)
+
+            val response = withContext(Dispatchers.IO) {
+                apiClient.apiService.getAlbum(albumId)
+            }
+
+            if (response.isSuccessful) {
+                response.body()
+            } else {
+                Log.e(TAG, "Failed to get album details: ${response.code()}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetching album details: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Fetch artist details and top tracks by Spotify artist ID.
+     *
+     * @param artistId Spotify artist ID
+     * @return Pair of (Artist, top tracks list) if successful, null otherwise
+     */
+    suspend fun fetchArtistDetails(artistId: String): Pair<Artist, List<Track>>? {
+        val accessToken = getAccessToken()
+        if (accessToken == null) {
+            Log.w(TAG, "Cannot fetch artist details: no valid access token")
+            return null
+        }
+
+        return try {
+            Log.d(TAG, "=== Fetching artist details for $artistId ===")
+            val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = false)
+
+            val artistResponse = withContext(Dispatchers.IO) {
+                apiClient.apiService.getArtist(artistId)
+            }
+
+            val topTracksResponse = withContext(Dispatchers.IO) {
+                apiClient.apiService.getArtistTopTracks(artistId)
+            }
+
+            val artist = if (artistResponse.isSuccessful) artistResponse.body() else null
+            val topTracks = if (topTracksResponse.isSuccessful) topTracksResponse.body()?.tracks else null
+
+            if (artist != null) {
+                Pair(artist, topTracks ?: emptyList())
+            } else {
+                Log.e(TAG, "Failed to get artist details: ${artistResponse.code()}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetching artist details: ${e.message}", e)
+            null
         }
     }
 

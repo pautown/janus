@@ -14,11 +14,15 @@ import com.mediadash.android.data.local.SettingsManager
 import com.mediadash.android.data.media.LyricsManager
 import com.mediadash.android.data.media.MediaSessionListener
 import com.mediadash.android.data.repository.MediaRepository
+import com.mediadash.android.data.spotify.SpotifyPlaybackController
 import com.mediadash.android.domain.model.LyricsLine
 import com.mediadash.android.domain.model.LyricsState
 import com.mediadash.android.domain.model.ConnectionStatus
 import com.mediadash.android.domain.model.MediaState
 import com.mediadash.android.media.PodcastPlayerManager
+import com.spotsdk.models.Album
+import com.spotsdk.models.Artist
+import com.spotsdk.models.Track
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -55,7 +59,13 @@ data class MainUiState(
     val mediaSource: MediaSource? = null,
     val lyricsEnabled: Boolean = false,
     val currentLyrics: LyricsState? = null,
-    val currentLyricsLineIndex: Int = -1
+    val currentLyricsLineIndex: Int = -1,
+    val showAlbumDetail: Boolean = false,
+    val showArtistDetail: Boolean = false,
+    val albumDetail: Album? = null,
+    val artistDetail: Artist? = null,
+    val artistTopTracks: List<Track>? = null,
+    val isLoadingDetail: Boolean = false
 )
 
 /**
@@ -68,7 +78,23 @@ sealed class MainUiEvent {
     data object OpenNotificationSettings : MainUiEvent()
     data object EnableBluetooth : MainUiEvent()
     data class ToggleLyrics(val enabled: Boolean) : MainUiEvent()
+    data class ViewAlbum(val albumId: String) : MainUiEvent()
+    data class ViewArtist(val artistId: String) : MainUiEvent()
+    data object DismissAlbumDetail : MainUiEvent()
+    data object DismissArtistDetail : MainUiEvent()
 }
+
+/**
+ * Internal helper to combine detail-related state flows.
+ */
+private data class DetailState(
+    val showAlbum: Boolean,
+    val showArtist: Boolean,
+    val album: Album?,
+    val artist: Artist?,
+    val topTracks: List<Track>?,
+    val isLoading: Boolean
+)
 
 /**
  * ViewModel for the main screen.
@@ -81,7 +107,8 @@ class MainViewModel @Inject constructor(
     private val bluetoothAdapter: BluetoothAdapter?,
     private val podcastPlayerManager: PodcastPlayerManager,
     private val settingsManager: SettingsManager,
-    private val lyricsManager: LyricsManager
+    private val lyricsManager: LyricsManager,
+    private val spotifyPlaybackController: SpotifyPlaybackController
 ) : ViewModel() {
 
     private val _hasNotificationPermission = MutableStateFlow(
@@ -106,6 +133,14 @@ class MainViewModel @Inject constructor(
     private var lastExternalPosition: Long = 0L
     private var lastExternalPositionTime: Long = 0L
     private var lastExternalTrackKey: String? = null
+
+    // Album/Artist detail state
+    private val _showAlbumDetail = MutableStateFlow(false)
+    private val _showArtistDetail = MutableStateFlow(false)
+    private val _albumDetail = MutableStateFlow<Album?>(null)
+    private val _artistDetail = MutableStateFlow<Artist?>(null)
+    private val _artistTopTracks = MutableStateFlow<List<Track>?>(null)
+    private val _isLoadingDetail = MutableStateFlow(false)
 
     init {
         // Start/stop position updates based on playback state
@@ -258,6 +293,27 @@ class MainViewModel @Inject constructor(
             currentLyrics = currentLyrics,
             currentLyricsLineIndex = currentLineIndex
         )
+    }.combine(
+        combine(
+            _showAlbumDetail,
+            _showArtistDetail,
+            _albumDetail,
+            _artistDetail,
+            _artistTopTracks
+        ) { showAlbum, showArtist, album, artist, topTracks ->
+            DetailState(showAlbum, showArtist, album, artist, topTracks, false)
+        }.combine(_isLoadingDetail) { detail, loading ->
+            detail.copy(isLoading = loading)
+        }
+    ) { mainState, detailState ->
+        mainState.copy(
+            showAlbumDetail = detailState.showAlbum,
+            showArtistDetail = detailState.showArtist,
+            albumDetail = detailState.album,
+            artistDetail = detailState.artist,
+            artistTopTracks = detailState.topTracks,
+            isLoadingDetail = detailState.isLoading
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -321,6 +377,40 @@ class MainViewModel @Inject constructor(
                 Log.d("LYRICS", "🎵 VIEWMODEL - ToggleLyrics event: ${event.enabled}")
                 settingsManager.setLyricsEnabled(event.enabled)
             }
+            is MainUiEvent.ViewAlbum -> fetchAlbumDetail(event.albumId)
+            is MainUiEvent.ViewArtist -> fetchArtistDetail(event.artistId)
+            is MainUiEvent.DismissAlbumDetail -> {
+                _showAlbumDetail.value = false
+                _albumDetail.value = null
+            }
+            is MainUiEvent.DismissArtistDetail -> {
+                _showArtistDetail.value = false
+                _artistDetail.value = null
+                _artistTopTracks.value = null
+            }
+        }
+    }
+
+    private fun fetchAlbumDetail(albumId: String) {
+        viewModelScope.launch {
+            _isLoadingDetail.value = true
+            _showAlbumDetail.value = true
+            val album = spotifyPlaybackController.fetchAlbumDetails(albumId)
+            _albumDetail.value = album
+            _isLoadingDetail.value = false
+        }
+    }
+
+    private fun fetchArtistDetail(artistId: String) {
+        viewModelScope.launch {
+            _isLoadingDetail.value = true
+            _showArtistDetail.value = true
+            val result = spotifyPlaybackController.fetchArtistDetails(artistId)
+            if (result != null) {
+                _artistDetail.value = result.first
+                _artistTopTracks.value = result.second
+            }
+            _isLoadingDetail.value = false
         }
     }
 
