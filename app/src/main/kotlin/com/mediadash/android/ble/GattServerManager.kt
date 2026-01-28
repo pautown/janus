@@ -1,5 +1,6 @@
 package com.mediadash.android.ble
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -15,9 +16,17 @@ import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.mediadash.android.di.ApplicationScope
 import com.mediadash.android.domain.model.AlbumArtChunk
 import com.mediadash.android.domain.model.AlbumArtRequest
@@ -118,6 +127,13 @@ class GattServerManager @Inject constructor(
     // Last known media state for read requests
     private var lastMediaState: MediaState? = null
 
+    // MTU tracking per device (default BLE MTU is 23 bytes)
+    private val deviceMtuMap = mutableMapOf<String, Int>()
+
+    // Bluetooth adapter state monitoring
+    private var bluetoothStateReceiver: BroadcastReceiver? = null
+    private var wasRunningBeforeAdapterOff = false
+
     private val gattServerCallback = object : BluetoothGattServerCallback() {
 
         @SuppressLint("MissingPermission")
@@ -136,6 +152,7 @@ class GattServerManager @Inject constructor(
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     _connectedDevices.update { it - device }
                     notificationEnabledDevices.remove(device)
+                    deviceMtuMap.remove(device.address)
                     albumArtTransmitter.cancelTransfer(device)
 
                     if (_connectedDevices.value.isEmpty()) {
@@ -167,7 +184,9 @@ class GattServerManager @Inject constructor(
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, responseData)
                 }
                 else -> {
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, characteristic.value)
+                    @Suppress("DEPRECATION")
+                    val charValue = characteristic.value
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, charValue)
                 }
             }
         }
@@ -246,6 +265,11 @@ class GattServerManager @Inject constructor(
             }
         }
 
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            Log.i(TAG, "MTU changed for ${device.address}: $mtu (payload: ${mtu - 3} bytes)")
+            deviceMtuMap[device.address] = mtu
+        }
+
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
             albumArtTransmitter.onNotificationSent(device, status)
         }
@@ -264,6 +288,36 @@ class GattServerManager @Inject constructor(
     }
 
     /**
+     * Checks if the app has the required Bluetooth permissions for API 31+.
+     * On pre-API 31 devices, legacy permissions are granted at install time.
+     */
+    private fun hasRequiredPermissions(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val hasConnect = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasAdvertise = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.BLUETOOTH_ADVERTISE
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasConnect || !hasAdvertise) {
+                Log.e(TAG, "Missing BLE permissions: CONNECT=$hasConnect, ADVERTISE=$hasAdvertise")
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * Returns the max notification payload size for a device (MTU - 3 for ATT header).
+     * Falls back to default (20 bytes) if MTU has not been negotiated.
+     */
+    fun getMaxPayloadSize(device: BluetoothDevice): Int {
+        val mtu = deviceMtuMap[device.address] ?: 23
+        return mtu - 3
+    }
+
+    /**
      * Starts the GATT server and begins advertising.
      */
     @SuppressLint("MissingPermission")
@@ -271,6 +325,11 @@ class GattServerManager @Inject constructor(
         if (_isRunning.value) {
             Log.w(TAG, "GATT server already running")
             return true
+        }
+
+        if (!hasRequiredPermissions()) {
+            _connectionStatus.value = ConnectionStatus.Error("Bluetooth permissions not granted")
+            return false
         }
 
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
@@ -299,6 +358,9 @@ class GattServerManager @Inject constructor(
             return false
         }
 
+        // Register Bluetooth adapter state receiver
+        registerBluetoothStateReceiver()
+
         _isRunning.value = true
         Log.i(TAG, "GATT server started")
         return true
@@ -310,6 +372,9 @@ class GattServerManager @Inject constructor(
     @SuppressLint("MissingPermission")
     fun stop() {
         Log.i(TAG, "Stopping GATT server")
+
+        // Unregister Bluetooth state receiver
+        unregisterBluetoothStateReceiver()
 
         // Stop advertising
         try {
@@ -333,10 +398,58 @@ class GattServerManager @Inject constructor(
         // Reset state
         _connectedDevices.value = emptySet()
         notificationEnabledDevices.clear()
+        deviceMtuMap.clear()
         throttler.reset()
 
         _isRunning.value = false
         _connectionStatus.value = ConnectionStatus.Disconnected
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private fun registerBluetoothStateReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                when (state) {
+                    BluetoothAdapter.STATE_OFF -> {
+                        Log.w(TAG, "Bluetooth adapter turned OFF")
+                        if (_isRunning.value) {
+                            wasRunningBeforeAdapterOff = true
+                            stop()
+                        }
+                    }
+                    BluetoothAdapter.STATE_ON -> {
+                        Log.i(TAG, "Bluetooth adapter turned ON")
+                        if (wasRunningBeforeAdapterOff) {
+                            wasRunningBeforeAdapterOff = false
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                Log.i(TAG, "Auto-restarting GATT server after adapter recovery")
+                                start()
+                            }, 500)
+                        }
+                    }
+                }
+            }
+        }
+        bluetoothStateReceiver = receiver
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, filter)
+        }
+    }
+
+    private fun unregisterBluetoothStateReceiver() {
+        bluetoothStateReceiver?.let { receiver ->
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Receiver already unregistered", e)
+            }
+        }
+        bluetoothStateReceiver = null
     }
 
     @SuppressLint("MissingPermission")
@@ -446,7 +559,33 @@ class GattServerManager @Inject constructor(
             BleConstants.CCCD_UUID,
             BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
         ).apply {
-            value = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
+            @Suppress("DEPRECATION")
+            setValue(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)
+        }
+    }
+
+    /**
+     * Sends a BLE notification using the appropriate API for the running Android version.
+     * - API 33+: Uses the new 4-param API that accepts ByteArray directly.
+     * - Pre-API 33: Falls back to deprecated 3-param API with characteristic.value set beforehand.
+     *
+     * @return true if the notification was queued successfully
+     */
+    @SuppressLint("MissingPermission")
+    private fun safeNotifyCharacteristicChanged(
+        server: BluetoothGattServer,
+        device: BluetoothDevice,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray
+    ): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val result = server.notifyCharacteristicChanged(device, characteristic, false, value)
+            result == BluetoothGatt.GATT_SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            characteristic.setValue(value)
+            @Suppress("DEPRECATION")
+            server.notifyCharacteristicChanged(device, characteristic, false)
         }
     }
 
@@ -562,12 +701,10 @@ class GattServerManager @Inject constructor(
         val server = gattServer ?: return
 
         val jsonData = json.encodeToString(state).toByteArray(Charsets.UTF_8)
-        characteristic.value = jsonData
 
         for (device in notificationEnabledDevices) {
             throttler.throttle()
-            @Suppress("DEPRECATION")
-            val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+            val sent = safeNotifyCharacteristicChanged(server, device, characteristic, jsonData)
             if (!sent) {
                 Log.w(TAG, "Failed to notify media state to ${device.address}")
             }
@@ -584,11 +721,9 @@ class GattServerManager @Inject constructor(
         val server = gattServer ?: return
 
         val jsonData = json.encodeToString(state).toByteArray(Charsets.UTF_8)
-        characteristic.value = jsonData
 
         throttler.throttle()
-        @Suppress("DEPRECATION")
-        val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+        val sent = safeNotifyCharacteristicChanged(server, device, characteristic, jsonData)
         if (sent) {
             Log.i(TAG, "Initial media state sent to ${device.address}: ${state.trackTitle} by ${state.artist}")
         } else {
@@ -621,11 +756,9 @@ class GattServerManager @Inject constructor(
         // Format: "timestamp|offset_minutes|timezone_id"
         val timeSyncData = "$timestamp|$offsetMinutes|$timezoneId"
         val timeData = timeSyncData.toByteArray(Charsets.UTF_8)
-        characteristic.value = timeData
 
         throttler.throttle()
-        @Suppress("DEPRECATION")
-        val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+        val sent = safeNotifyCharacteristicChanged(server, device, characteristic, timeData)
         if (sent) {
             Log.i(TAG, "Time sync sent to ${device.address}: $timeSyncData (${java.util.Date(timestamp * 1000)})")
         } else {
@@ -710,9 +843,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify podcast info chunk $index to ${device.address}")
                     break
@@ -750,9 +881,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(1, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify podcast list chunk $index to ${device.address}")
                     Log.w("PODCAST", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -789,9 +918,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(2, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify recent episodes chunk $index to ${device.address}")
                     Log.w("PODCAST", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -828,9 +955,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(3, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify podcast episodes chunk $index to ${device.address}")
                     Log.w("PODCAST", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -876,9 +1001,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(4, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify media channels chunk $index to ${device.address}")
                     Log.w("MEDIA_CHANNELS", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -955,9 +1078,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(5, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify connection status chunk $index to ${device.address}")
                     Log.w("CONNECTIONS", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -1007,9 +1128,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(6, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify queue chunk $index to ${device.address}")
                     Log.w("QUEUE", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -1069,9 +1188,7 @@ class GattServerManager @Inject constructor(
                 val header = byteArrayOf(7, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
 
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
                 if (!sent) {
                     Log.w(TAG, "Failed to notify Spotify state chunk $index to ${device.address}")
                     Log.w("SPOTIFY", "   ⚠️ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -1107,9 +1224,7 @@ class GattServerManager @Inject constructor(
                 // Header: [type=8][chunkIndex][totalChunks][data...]
                 val header = byteArrayOf(8, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                server.notifyCharacteristicChanged(device, characteristic, false)
+                safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
             }
         }
         Log.i("SPOTIFY_LIB", "✅ Library overview sent")
@@ -1141,9 +1256,7 @@ class GattServerManager @Inject constructor(
                 // Header: [type=9][chunkIndex][totalChunks][data...]
                 val header = byteArrayOf(9, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                server.notifyCharacteristicChanged(device, characteristic, false)
+                safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
             }
         }
         Log.i("SPOTIFY_LIB", "✅ Track list sent")
@@ -1175,9 +1288,7 @@ class GattServerManager @Inject constructor(
                 // Header: [type=10][chunkIndex][totalChunks][data...]
                 val header = byteArrayOf(10, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                server.notifyCharacteristicChanged(device, characteristic, false)
+                safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
             }
         }
         Log.i("SPOTIFY_LIB", "✅ Album list sent")
@@ -1209,9 +1320,7 @@ class GattServerManager @Inject constructor(
                 // Header: [type=11][chunkIndex][totalChunks][data...]
                 val header = byteArrayOf(11, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                server.notifyCharacteristicChanged(device, characteristic, false)
+                safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
             }
         }
         Log.i("SPOTIFY_LIB", "✅ Playlist list sent")
@@ -1243,9 +1352,7 @@ class GattServerManager @Inject constructor(
                 // Header: [type=12][chunkIndex][totalChunks][data...]
                 val header = byteArrayOf(12, index.toByte(), chunks.size.toByte())
                 val chunkData = header + chunk.toByteArray()
-                characteristic.value = chunkData
-                @Suppress("DEPRECATION")
-                server.notifyCharacteristicChanged(device, characteristic, false)
+                safeNotifyCharacteristicChanged(server, device, characteristic, chunkData)
             }
         }
         Log.i("SPOTIFY_LIB", "✅ Artist list sent")
@@ -1300,10 +1407,8 @@ class GattServerManager @Inject constructor(
                         totalBlePackets.toByte()
                     )
                     val packet = header + packetData.toByteArray()
-                    characteristic.value = packet
 
-                    @Suppress("DEPRECATION")
-                    val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+                    val sent = safeNotifyCharacteristicChanged(server, device, characteristic, packet)
                     if (!sent) {
                         Log.w(TAG, "Failed to notify lyrics packet to ${device.address}")
                         Log.w("LYRICS", "   ⚠️ Failed to send packet ${packetIndex + 1}/$totalBlePackets of chunk ${chunkIndex + 1}")
@@ -1346,12 +1451,10 @@ class GattServerManager @Inject constructor(
         )
 
         val jsonData = json.encodeToString(clearResponse).toByteArray(Charsets.UTF_8)
-        characteristic.value = jsonData
 
         for (device in notificationEnabledDevices) {
             throttler.throttle()
-            @Suppress("DEPRECATION")
-            val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+            val sent = safeNotifyCharacteristicChanged(server, device, characteristic, jsonData)
             if (!sent) {
                 Log.w("LYRICS", "   ⚠️ Failed to notify clear to ${device.address}")
                 Log.w(TAG, "Failed to notify lyrics clear to ${device.address}")
@@ -1387,12 +1490,10 @@ class GattServerManager @Inject constructor(
             append("}")
         }
         val jsonData = jsonString.toByteArray(Charsets.UTF_8)
-        characteristic.value = jsonData
 
         for (device in notificationEnabledDevices) {
             throttler.throttle()
-            @Suppress("DEPRECATION")
-            val sent = server.notifyCharacteristicChanged(device, characteristic, false)
+            val sent = safeNotifyCharacteristicChanged(server, device, characteristic, jsonData)
             if (!sent) {
                 Log.w(TAG, "Failed to notify settings to ${device.address}")
             } else {

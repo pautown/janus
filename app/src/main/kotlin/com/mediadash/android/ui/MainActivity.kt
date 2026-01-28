@@ -22,16 +22,10 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    private val bluetoothPermissionLauncher = registerForActivityResult(
+    private val allPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         // Permissions result handled - UI will update based on state
-    }
-
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        // Permission result handled
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,12 +71,12 @@ class MainActivity : ComponentActivity() {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
             ) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
 
         if (permissionsToRequest.isNotEmpty()) {
-            bluetoothPermissionLauncher.launch(permissionsToRequest.toTypedArray())
+            allPermissionsLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 

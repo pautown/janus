@@ -1,8 +1,11 @@
 package com.mediadash.android.ble
 
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattServer
+import android.os.Build
 import android.util.Log
 import com.mediadash.android.domain.model.AlbumArtChunk
 import com.mediadash.android.util.CRC32Util
@@ -109,7 +112,6 @@ class AlbumArtTransmitter @Inject constructor(
 
                 // Serialize chunk to binary format
                 val binaryData = chunk.toBinary()
-                characteristic.value = binaryData
 
                 // Log first and last chunks, and every 50th chunk
                 if (index == 0 || index == chunks.size - 1 || (index + 1) % 50 == 0) {
@@ -117,8 +119,7 @@ class AlbumArtTransmitter @Inject constructor(
                 }
 
                 // Send notification
-                @Suppress("DEPRECATION")
-                val sent = gattServer.notifyCharacteristicChanged(device, characteristic, false)
+                val sent = safeNotifyCharacteristicChanged(gattServer, device, characteristic, binaryData)
 
                 if (!sent) {
                     Log.e("ALBUMART", "      ❌ Failed to send chunk ${index + 1}/${chunks.size}")
@@ -154,6 +155,27 @@ class AlbumArtTransmitter @Inject constructor(
             return false
         } finally {
             activeTransfers.remove(deviceAddress)
+        }
+    }
+
+    /**
+     * Sends a BLE notification using the appropriate API for the running Android version.
+     */
+    @SuppressLint("MissingPermission")
+    private fun safeNotifyCharacteristicChanged(
+        server: BluetoothGattServer,
+        device: BluetoothDevice,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray
+    ): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val result = server.notifyCharacteristicChanged(device, characteristic, false, value)
+            result == BluetoothGatt.GATT_SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            characteristic.setValue(value)
+            @Suppress("DEPRECATION")
+            server.notifyCharacteristicChanged(device, characteristic, false)
         }
     }
 
