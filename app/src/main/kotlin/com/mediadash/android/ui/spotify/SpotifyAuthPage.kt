@@ -4,6 +4,7 @@ import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
@@ -154,155 +155,169 @@ fun SpotifyAuthPage(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            if (uiState.isLoggedIn) {
-                // Logged in state
-                LoggedInCard(
-                    userName = uiState.userName,
-                    userEmail = uiState.userEmail,
-                    userImageUrl = uiState.userImageUrl,
-                    userId = uiState.userId,
-                    country = uiState.country,
-                    product = uiState.product,
-                    followerCount = uiState.followerCount,
-                    onLogout = { viewModel.onEvent(SpotifyAuthEvent.Logout) }
-                )
+            val pageState = when {
+                uiState.isLoggedIn -> "logged_in"
+                uiState.isClientIdConfigured -> "login"
+                else -> "setup"
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            Crossfade(
+                targetState = pageState,
+                label = "spotify_auth_state"
+            ) { state ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    when (state) {
+                        "logged_in" -> {
+                            LoggedInCard(
+                                userName = uiState.userName,
+                                userEmail = uiState.userEmail,
+                                userImageUrl = uiState.userImageUrl,
+                                userId = uiState.userId,
+                                country = uiState.country,
+                                product = uiState.product,
+                                followerCount = uiState.followerCount,
+                                onLogout = { viewModel.onEvent(SpotifyAuthEvent.Logout) }
+                            )
 
-                // Tab row for library navigation
-                SpotifyTabRow(
-                    selectedTab = uiState.selectedTab,
-                    onTabSelected = { viewModel.onEvent(SpotifyAuthEvent.SelectTab(it)) }
-                )
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                Spacer(modifier = Modifier.height(16.dp))
+                            SpotifyTabRow(
+                                selectedTab = uiState.selectedTab,
+                                onTabSelected = { viewModel.onEvent(SpotifyAuthEvent.SelectTab(it)) }
+                            )
 
-                // Content based on selected tab
-                when (uiState.selectedTab) {
-                    SpotifyTab.OVERVIEW -> {
-                        // Original overview content
-                        LibraryStatsCard(
-                            isLoading = uiState.isLoadingStats,
-                            savedTracks = uiState.savedTracksCount,
-                            savedAlbums = uiState.savedAlbumsCount,
-                            playlists = uiState.playlistsCount,
-                            followedArtists = uiState.followedArtistsCount,
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshLibraryStats) }
-                        )
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                            when (uiState.selectedTab) {
+                                SpotifyTab.OVERVIEW -> {
+                                    LibraryStatsCard(
+                                        isLoading = uiState.isLoadingStats,
+                                        savedTracks = uiState.savedTracksCount,
+                                        savedAlbums = uiState.savedAlbumsCount,
+                                        playlists = uiState.playlistsCount,
+                                        followedArtists = uiState.followedArtistsCount,
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshLibraryStats) }
+                                    )
 
-                        ActivityCard(
-                            currentlyPlaying = uiState.currentlyPlaying,
-                            recentTrack = uiState.recentTrackName,
-                            recentArtist = uiState.recentTrackArtist
-                        )
+                                    Spacer(modifier = Modifier.height(24.dp))
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                                    ActivityCard(
+                                        currentlyPlaying = uiState.currentlyPlaying,
+                                        recentTrack = uiState.recentTrackName,
+                                        recentArtist = uiState.recentTrackArtist
+                                    )
 
-                        PlaybackControlsCard(
-                            shuffleState = uiState.shuffleState,
-                            repeatState = uiState.repeatState,
-                            isToggling = uiState.isTogglingPlayback,
-                            onToggleShuffle = { viewModel.onEvent(SpotifyAuthEvent.ToggleShuffle) },
-                            onToggleRepeat = { viewModel.onEvent(SpotifyAuthEvent.ToggleRepeat) },
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshPlaybackState) }
-                        )
+                                    Spacer(modifier = Modifier.height(24.dp))
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                                    PlaybackControlsCard(
+                                        shuffleState = uiState.shuffleState,
+                                        repeatState = uiState.repeatState,
+                                        isToggling = uiState.isTogglingPlayback,
+                                        onToggleShuffle = { viewModel.onEvent(SpotifyAuthEvent.ToggleShuffle) },
+                                        onToggleRepeat = { viewModel.onEvent(SpotifyAuthEvent.ToggleRepeat) },
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshPlaybackState) }
+                                    )
 
-                        QueueCard(
-                            queueTracks = uiState.queueTracks,
-                            isLoading = uiState.isLoadingQueue,
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshQueue) },
-                            onTrackClick = { position -> viewModel.onEvent(SpotifyAuthEvent.SkipToPosition(position)) }
-                        )
+                                    Spacer(modifier = Modifier.height(24.dp))
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                                    QueueCard(
+                                        queueTracks = uiState.queueTracks,
+                                        isLoading = uiState.isLoadingQueue,
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.RefreshQueue) },
+                                        onTrackClick = { position -> viewModel.onEvent(SpotifyAuthEvent.SkipToPosition(position)) }
+                                    )
 
-                        ConnectionStatusCard(isConnected = true)
-                    }
+                                    Spacer(modifier = Modifier.height(24.dp))
 
-                    SpotifyTab.RECENT -> {
-                        RecentTracksSection(
-                            tracks = uiState.recentTracks,
-                            isLoading = uiState.isLoadingRecent,
-                            savedTrackIds = uiState.savedTrackIds,
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadRecentTracks) },
-                            onTrackClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayTrack(uri)) },
-                            onToggleSave = { trackId, isSaved ->
-                                viewModel.onEvent(SpotifyAuthEvent.ToggleSaveTrack(trackId, isSaved))
+                                    ConnectionStatusCard(isConnected = true)
+                                }
+
+                                SpotifyTab.RECENT -> {
+                                    RecentTracksSection(
+                                        tracks = uiState.recentTracks,
+                                        isLoading = uiState.isLoadingRecent,
+                                        savedTrackIds = uiState.savedTrackIds,
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadRecentTracks) },
+                                        onTrackClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayTrack(uri)) },
+                                        onToggleSave = { trackId, isSaved ->
+                                            viewModel.onEvent(SpotifyAuthEvent.ToggleSaveTrack(trackId, isSaved))
+                                        }
+                                    )
+                                }
+
+                                SpotifyTab.LIKED -> {
+                                    SavedTracksSection(
+                                        tracks = uiState.savedTracks,
+                                        isLoading = uiState.isLoadingSaved,
+                                        hasMore = uiState.hasMoreSaved,
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadSavedTracks) },
+                                        onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreSavedTracks) },
+                                        onTrackClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayTrack(uri)) },
+                                        onRemoveTrack = { trackId -> viewModel.onEvent(SpotifyAuthEvent.RemoveSavedTrack(trackId)) }
+                                    )
+                                }
+
+                                SpotifyTab.ALBUMS -> {
+                                    SavedAlbumsSection(
+                                        albums = uiState.savedAlbums,
+                                        isLoading = uiState.isLoadingAlbums,
+                                        hasMore = uiState.hasMoreAlbums,
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadSavedAlbums) },
+                                        onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreSavedAlbums) },
+                                        onAlbumClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
+                                    )
+                                }
+
+                                SpotifyTab.ARTISTS -> {
+                                    FollowedArtistsSection(
+                                        artists = uiState.followedArtists,
+                                        isLoading = uiState.isLoadingArtists,
+                                        hasMore = uiState.hasMoreArtists,
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadFollowedArtists) },
+                                        onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreFollowedArtists) },
+                                        onArtistClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
+                                    )
+                                }
+
+                                SpotifyTab.PLAYLISTS -> {
+                                    PlaylistsSection(
+                                        playlists = uiState.playlists,
+                                        isLoading = uiState.isLoadingPlaylists,
+                                        hasMore = uiState.hasMorePlaylists,
+                                        onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadPlaylists) },
+                                        onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMorePlaylists) },
+                                        onPlaylistClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
+                                    )
+                                }
                             }
-                        )
-                    }
+                        }
 
-                    SpotifyTab.LIKED -> {
-                        SavedTracksSection(
-                            tracks = uiState.savedTracks,
-                            isLoading = uiState.isLoadingSaved,
-                            hasMore = uiState.hasMoreSaved,
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadSavedTracks) },
-                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreSavedTracks) },
-                            onTrackClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayTrack(uri)) },
-                            onRemoveTrack = { trackId -> viewModel.onEvent(SpotifyAuthEvent.RemoveSavedTrack(trackId)) }
-                        )
-                    }
+                        "login" -> {
+                            LoginCard(
+                                isLoading = uiState.isLoading,
+                                errorMessage = uiState.errorMessage,
+                                onLogin = {
+                                    val intent = viewModel.getAuthIntent()
+                                    if (intent != null) {
+                                        authLauncher.launch(intent)
+                                    }
+                                },
+                                onClearError = { viewModel.onEvent(SpotifyAuthEvent.ClearError) }
+                            )
 
-                    SpotifyTab.ALBUMS -> {
-                        SavedAlbumsSection(
-                            albums = uiState.savedAlbums,
-                            isLoading = uiState.isLoadingAlbums,
-                            hasMore = uiState.hasMoreAlbums,
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadSavedAlbums) },
-                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreSavedAlbums) },
-                            onAlbumClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
-                        )
-                    }
+                            Spacer(modifier = Modifier.height(24.dp))
 
-                    SpotifyTab.ARTISTS -> {
-                        FollowedArtistsSection(
-                            artists = uiState.followedArtists,
-                            isLoading = uiState.isLoadingArtists,
-                            hasMore = uiState.hasMoreArtists,
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadFollowedArtists) },
-                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMoreFollowedArtists) },
-                            onArtistClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
-                        )
-                    }
+                            InfoCard()
+                        }
 
-                    SpotifyTab.PLAYLISTS -> {
-                        PlaylistsSection(
-                            playlists = uiState.playlists,
-                            isLoading = uiState.isLoadingPlaylists,
-                            hasMore = uiState.hasMorePlaylists,
-                            onRefresh = { viewModel.onEvent(SpotifyAuthEvent.LoadPlaylists) },
-                            onLoadMore = { viewModel.onEvent(SpotifyAuthEvent.LoadMorePlaylists) },
-                            onPlaylistClick = { uri -> viewModel.onEvent(SpotifyAuthEvent.PlayContext(uri)) }
-                        )
+                        else -> {
+                            SetupInstructionsCard()
+                        }
                     }
                 }
-
-            } else if (uiState.isClientIdConfigured) {
-                // Client ID configured but not logged in
-                LoginCard(
-                    isLoading = uiState.isLoading,
-                    errorMessage = uiState.errorMessage,
-                    onLogin = {
-                        val intent = viewModel.getAuthIntent()
-                        if (intent != null) {
-                            authLauncher.launch(intent)
-                        }
-                    },
-                    onClearError = { viewModel.onEvent(SpotifyAuthEvent.ClearError) }
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Info card
-                InfoCard()
-            } else {
-                // No client ID configured - show setup instructions
-                SetupInstructionsCard()
             }
 
             Spacer(modifier = Modifier.height(80.dp)) // Space for page indicator
@@ -760,27 +775,28 @@ private fun LoggedInCard(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // User avatar
-            if (userImageUrl != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(userImageUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = "Profile picture",
-                    modifier = Modifier
-                        .size(80.dp)
-                        .clip(CircleShape),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .clip(CircleShape)
-                        .background(SpotifyGreen),
-                    contentAlignment = Alignment.Center
-                ) {
+            // User avatar - always use a single Box slot to avoid
+            // conditional tree swaps that can trigger Compose layout bugs
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(CircleShape)
+                    .background(SpotifyGreen),
+                contentAlignment = Alignment.Center
+            ) {
+                if (userImageUrl != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(userImageUrl)
+                            .crossfade(false)
+                            .build(),
+                        contentDescription = "Profile picture",
+                        modifier = Modifier
+                            .size(80.dp)
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
                     Icon(
                         imageVector = Icons.Default.Person,
                         contentDescription = null,

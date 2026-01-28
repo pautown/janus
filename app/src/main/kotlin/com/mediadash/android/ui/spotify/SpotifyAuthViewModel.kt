@@ -22,6 +22,7 @@ import com.spotsdk.api.createSimple
 import com.spotsdk.auth.SpotifyAuthManager
 import com.spotsdk.auth.TokenResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -1109,6 +1110,9 @@ class SpotifyAuthViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
+                // Collect all saved IDs across chunks, then emit one state update
+                val allNewSavedIds = mutableSetOf<String>()
+
                 // Split into chunks of 50 (API limit)
                 trackIds.chunked(50).forEach { chunk ->
                     val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = false)
@@ -1121,11 +1125,15 @@ class SpotifyAuthViewModel @Inject constructor(
                         val newSavedIds = chunk.filterIndexed { index, _ ->
                             savedStatus.getOrNull(index) == true
                         }.toSet()
-
-                        _uiState.value = _uiState.value.copy(
-                            savedTrackIds = _uiState.value.savedTrackIds + newSavedIds
-                        )
+                        allNewSavedIds.addAll(newSavedIds)
                     }
+                }
+
+                // Single batched state update instead of one per chunk
+                if (allNewSavedIds.isNotEmpty()) {
+                    _uiState.value = _uiState.value.copy(
+                        savedTrackIds = _uiState.value.savedTrackIds + allNewSavedIds
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Exception checking saved tracks: ${e.message}", e)
@@ -1447,7 +1455,11 @@ class SpotifyAuthViewModel @Inject constructor(
      * Handles the result from the Spotify OAuth activity.
      */
     fun handleAuthResult(result: ActivityResult) {
+        // Post to the end of the main thread queue so the activity result
+        // callback completes and Compose finishes restoring its tree
+        // before we trigger any state changes.
         viewModelScope.launch {
+            delay(200)
             try {
                 val data = result.data
                 if (data == null || result.resultCode != Activity.RESULT_OK) {
@@ -1508,10 +1520,12 @@ class SpotifyAuthViewModel @Inject constructor(
             // Save tokens
             saveTokens(tokenResult)
 
-            // Update UI state
+            // Update UI state - include isLoadingStats to avoid a separate emission
+            // that would race with Compose laying out the newly-inserted logged-in tree
             _uiState.value = _uiState.value.copy(
                 isLoggedIn = true,
                 isLoading = false,
+                isLoadingStats = true,
                 accessToken = tokenResult.accessToken,
                 errorMessage = null
             )
@@ -1579,8 +1593,6 @@ class SpotifyAuthViewModel @Inject constructor(
         Log.d(TAG, "Access token (first 20 chars): ${accessToken.take(20)}...")
 
         try {
-            _uiState.value = _uiState.value.copy(isLoadingStats = true)
-
             Log.d(TAG, "Creating SpotifyApiClient...")
             val apiClient = SpotifyApiClient.createSimple(accessToken, enableLogging = true)
             val apiService = apiClient.apiService
@@ -1656,6 +1668,15 @@ class SpotifyAuthViewModel @Inject constructor(
     private suspend fun fetchLibraryStats(apiService: SpotifyApiService) {
         Log.d(TAG, "=== fetchLibraryStats START ===")
 
+        // Collect all stats into local variables, then emit one batched UI update
+        var savedTracks: Int? = null
+        var savedAlbums: Int? = null
+        var playlists: Int? = null
+        var followedArtists: Int? = null
+        var recentTrackName: String? = null
+        var recentTrackArtist: String? = null
+        var currentlyPlaying: String? = null
+
         // Fetch saved tracks count
         try {
             Log.d(TAG, "Fetching saved tracks from /me/tracks...")
@@ -1665,9 +1686,8 @@ class SpotifyAuthViewModel @Inject constructor(
             Log.d(TAG, "Saved tracks response code: ${tracksResponse.code()}")
             if (tracksResponse.isSuccessful) {
                 val body = tracksResponse.body()
-                val total = body?.total ?: 0
-                Log.d(TAG, "Saved tracks total: $total")
-                _uiState.value = _uiState.value.copy(savedTracksCount = total)
+                savedTracks = body?.total ?: 0
+                Log.d(TAG, "Saved tracks total: $savedTracks")
             } else {
                 val errorBody = tracksResponse.errorBody()?.string()
                 Log.e(TAG, "Failed to fetch saved tracks: ${tracksResponse.code()}")
@@ -1686,9 +1706,8 @@ class SpotifyAuthViewModel @Inject constructor(
             Log.d(TAG, "Saved albums response code: ${albumsResponse.code()}")
             if (albumsResponse.isSuccessful) {
                 val body = albumsResponse.body()
-                val total = body?.total ?: 0
-                Log.d(TAG, "Saved albums total: $total")
-                _uiState.value = _uiState.value.copy(savedAlbumsCount = total)
+                savedAlbums = body?.total ?: 0
+                Log.d(TAG, "Saved albums total: $savedAlbums")
             } else {
                 val errorBody = albumsResponse.errorBody()?.string()
                 Log.e(TAG, "Failed to fetch saved albums: ${albumsResponse.code()}")
@@ -1707,9 +1726,8 @@ class SpotifyAuthViewModel @Inject constructor(
             Log.d(TAG, "Playlists response code: ${playlistsResponse.code()}")
             if (playlistsResponse.isSuccessful) {
                 val body = playlistsResponse.body()
-                val total = body?.total ?: 0
-                Log.d(TAG, "Playlists total: $total")
-                _uiState.value = _uiState.value.copy(playlistsCount = total)
+                playlists = body?.total ?: 0
+                Log.d(TAG, "Playlists total: $playlists")
             } else {
                 val errorBody = playlistsResponse.errorBody()?.string()
                 Log.e(TAG, "Failed to fetch playlists: ${playlistsResponse.code()}")
@@ -1728,9 +1746,8 @@ class SpotifyAuthViewModel @Inject constructor(
             Log.d(TAG, "Followed artists response code: ${artistsResponse.code()}")
             if (artistsResponse.isSuccessful) {
                 val body = artistsResponse.body()
-                val total = body?.artists?.total ?: 0
-                Log.d(TAG, "Followed artists total: $total")
-                _uiState.value = _uiState.value.copy(followedArtistsCount = total)
+                followedArtists = body?.artists?.total ?: 0
+                Log.d(TAG, "Followed artists total: $followedArtists")
             } else {
                 val errorBody = artistsResponse.errorBody()?.string()
                 Log.e(TAG, "Failed to fetch followed artists: ${artistsResponse.code()}")
@@ -1753,10 +1770,8 @@ class SpotifyAuthViewModel @Inject constructor(
                 val recentTrack = body?.items?.firstOrNull()?.track
                 if (recentTrack != null) {
                     Log.d(TAG, "Recent track: ${recentTrack.name} by ${recentTrack.artists?.firstOrNull()?.name}")
-                    _uiState.value = _uiState.value.copy(
-                        recentTrackName = recentTrack.name,
-                        recentTrackArtist = recentTrack.artists?.firstOrNull()?.name
-                    )
+                    recentTrackName = recentTrack.name
+                    recentTrackArtist = recentTrack.artists?.firstOrNull()?.name
                 } else {
                     Log.d(TAG, "No recent tracks found")
                 }
@@ -1785,9 +1800,7 @@ class SpotifyAuthViewModel @Inject constructor(
                 if (current?.isPlaying == true && currentTrack != null) {
                     val artistName = currentTrack.artists?.firstOrNull()?.name ?: ""
                     Log.d(TAG, "Currently playing: ${currentTrack.name} - $artistName")
-                    _uiState.value = _uiState.value.copy(
-                        currentlyPlaying = "${currentTrack.name} - $artistName"
-                    )
+                    currentlyPlaying = "${currentTrack.name} - $artistName"
                 } else {
                     Log.d(TAG, "Nothing currently playing or track is null")
                 }
@@ -1804,6 +1817,17 @@ class SpotifyAuthViewModel @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Exception fetching currently playing: ${e.message}", e)
         }
+
+        // Batch all stats into a single UI state update to avoid rapid recompositions
+        _uiState.value = _uiState.value.copy(
+            savedTracksCount = savedTracks ?: _uiState.value.savedTracksCount,
+            savedAlbumsCount = savedAlbums ?: _uiState.value.savedAlbumsCount,
+            playlistsCount = playlists ?: _uiState.value.playlistsCount,
+            followedArtistsCount = followedArtists ?: _uiState.value.followedArtistsCount,
+            recentTrackName = recentTrackName ?: _uiState.value.recentTrackName,
+            recentTrackArtist = recentTrackArtist ?: _uiState.value.recentTrackArtist,
+            currentlyPlaying = currentlyPlaying ?: _uiState.value.currentlyPlaying
+        )
 
         Log.d(TAG, "=== fetchLibraryStats END ===")
     }
