@@ -345,8 +345,8 @@ The Spotify integration uses a clean architecture:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/pautown/janus-android.git
-cd janus-android
+git clone https://github.com/pautown/janus.git
+cd janus
 ```
 
 2. Open in Android Studio or build via command line:
